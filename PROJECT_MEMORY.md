@@ -2,6 +2,28 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-09 第二轮：更克制的高级感、网页端额度估算、趋势图与设置滚动卡顿
+
+- **设置页滚动卡顿（已测量并修复）**：
+  - 用 `Scripts/settings_scroll_bench.swift` 在真实窗口里程序化滚动。修复前服务商列表平均 15.3 ms/帧、p95 24.7 ms，超过 16.7 ms 预算；修复后平均 3.0 ms、p95 5.8 ms。
+  - 根因：65 行列表放在 `LazyVStack` 里，滚动时才创建行和 AppKit 开关；`ProviderBadge` 每个带两层阴影，造成离屏渲染。
+  - 修复：列表改为普通 `VStack`；去掉徽章、行图标和卡片上的阴影；`SettingsRootView` 不再 `@ObservedObject` DashboardStore，只有菜单栏页通过 `LiveMenuBarSettingsView` 订阅，其他页自己按需订阅。
+  - 不要在会滚动的列表里给每行加 `.shadow`。
+- **菜单视觉**：
+  - 概览改为 Activity 风格同心圆环（`ConcentricQuotaRings`，品牌色），右侧图例为名称、“窗口 · 倒计时”和细字号大数字；去掉卡片底和灰色胶囊。
+  - 状态改成“点 + 文字”。
+  - 子菜单为品牌色细环（`UsageRing` 的 `tint`/`numeralWeight`）、3pt 进度细条、无框数字网格，分区用发丝线。
+- **网页端用量**：
+  - Anthropic 不提供网页聊天的 Token 和费用明细；共享额度的百分比本身已包含网页、桌面和 Claude Code。
+  - 新增估算：`ClaudeCodeActivityLog`（actor）增量读取 `~/.claude/projects/**/*.jsonl`（另含 `~/.config/claude/projects`、`$CLAUDE_CONFIG_DIR/projects`），得到按分钟的本机活动。首次扫描约 0.5 s，之后约 4 ms，与引擎请求并行执行。
+  - `ClaudeQuotaSeries.attributed(activeMinutes:)`：额度在本机有活动的区间（前后各放宽 3 分钟）上涨算 Claude Code，否则算网页/其他设备；两者重叠时归给 Claude Code，所以“其他设备”是下限。界面会标注“估算”。
+- **额度采样连线修复**：服务器返回的 `resetsAt` 每次有几秒漂移，`connects` 原先要求严格相等，导致曲线碎成很多段。现在用 `sameWindow` 容许 300 s 误差；有回归测试。
+- **趋势图**：
+  - 常驻卡片，上方是“剩余 % / 多久后重置”两个大数字；下方是平滑 Catmull-Rom 曲线加渐变面积，网页段用靛蓝叠加。
+  - 有重置标记和整点刻度，并显示来源占比条和图例。
+  - 体积太大时 Swift 5.6 会类型检查超时，所以拆成多个 `@ViewBuilder` 子函数。
+- `DS.countdown` 改为手工格式的紧凑写法（“1小时8分”“6天10小时”“1h 8m”）。
+
 ## 2026-10-09 UI 全面重做：macOS 原生风格 + 高级展示（提交状态以 Git 为准）
 
 用户看了上一版说“UI 完全没变化”，要求全部重做并亲自检查界面。本轮做法和约定：

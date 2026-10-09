@@ -48,6 +48,10 @@ final class DashboardStore: ObservableObject {
     private static let interactiveSupplementMaxAge: TimeInterval = 5 * 60
     private let quotaTrendStore = LocalQuotaTrendStore()
     private let claudeQuotaHistoryStore = ClaudeQuotaHistoryStore()
+    /// Local Claude Code activity, used to split shared-quota consumption
+    /// between Claude Code and web/desktop/other devices.
+    private let claudeActivity = ClaudeCodeActivityLog()
+    private var claudeActiveMinutes: Set<Int> = []
     private let spendHistoryStore = LocalSpendHistoryStore()
     private let tokenHistoryStore: LocalTokenHistoryStore
 
@@ -83,8 +87,12 @@ final class DashboardStore: ObservableObject {
     }
 
     private func performRefresh() async {
+        // Reads Claude Code logs on the actor's executor while the usage
+        // engine runs; incremental scans take a few milliseconds.
+        async let activity = claudeActivity.activeMinutes()
         do {
             let loaded = try await client.fetchEnabled(status: true)
+            claudeActiveMinutes = await activity
             snapshots = loaded.sorted { left, right in
                 let providerOrder = left.displayName.localizedCaseInsensitiveCompare(right.displayName)
                 if providerOrder != .orderedSame { return providerOrder == .orderedAscending }
@@ -266,6 +274,7 @@ final class DashboardStore: ObservableObject {
     private func attachClaudeQuotaHistory(to dashboard: inout ProviderDashboard, snapshot: ProviderSnapshot) {
         guard snapshot.provider == "claude" else { return }
         dashboard.claudeQuotaHistory = claudeQuotaHistoryStore.record(snapshot: snapshot)
+            .map { $0.attributed(activeMinutes: claudeActiveMinutes) }
         dashboard.claudeQuotaHistoryNotice = snapshot.claudeQuotaAccountKey == nil
             ? L("Account identity unavailable. History starts after this account can be identified.")
             : claudeQuotaHistoryStore.persistenceError

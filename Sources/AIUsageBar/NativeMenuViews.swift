@@ -4,6 +4,7 @@ import SwiftUI
 enum NativeMenuLayout {
     /// Width of every hosted row; NSMenu sizes itself to its widest item.
     static let width: CGFloat = 340
+    static let inset: CGFloat = 16
 }
 
 struct NativeMenuOverviewRow: Identifiable, Hashable {
@@ -22,6 +23,16 @@ struct NativeMenuOverviewRow: Identifiable, Hashable {
     var remainingPercent: Double? { usedPercent.map { max(0, min(100, 100 - $0)) } }
 }
 
+/// Hairline divider inset like native menu separators.
+private struct MenuHairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 0.5)
+            .padding(.horizontal, NativeMenuLayout.inset)
+    }
+}
+
 struct NativeMenuHeaderView: View {
     let title: String
     let subtitle: String
@@ -31,15 +42,20 @@ struct NativeMenuHeaderView: View {
     var planLabel: String? = nil
 
     var body: some View {
-        HStack(spacing: 11) {
-            ProviderBadge(providerID: providerID, size: 34)
+        HStack(alignment: .center, spacing: 10) {
+            if let providerID = providerID {
+                ProviderBadge(providerID: providerID, size: 26)
+            }
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: providerID == nil ? 13 : 14, weight: .semibold))
                         .lineLimit(1)
                     if let plan = planLabel, !plan.isEmpty {
-                        DSChip(text: plan, tint: providerID.map(ProviderBrand.color(for:)) ?? .accentColor)
+                        Text(plan.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundColor(providerID.map(ProviderBrand.color(for:)) ?? .accentColor)
                     }
                 }
                 Text(subtitle)
@@ -52,18 +68,21 @@ struct NativeMenuHeaderView: View {
             if refreshing {
                 ProgressView()
                     .controlSize(.small)
-                    .scaleEffect(0.75)
+                    .scaleEffect(0.7)
                     .accessibilityLabel(Text(L("Refreshing providers")))
-            } else if let health = health, health != .unknown {
-                DSChip(
-                    text: health == .operational ? L("All systems normal") : health.title,
-                    symbol: health.symbolName,
-                    tint: DS.healthColor(health))
+            } else if let health = health, health.isIncident {
+                HStack(spacing: 4) {
+                    Circle().fill(DS.healthColor(health)).frame(width: 6, height: 6)
+                    Text(health.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(DS.healthColor(health))
+                }
+                .accessibilityElement(children: .combine)
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, NativeMenuLayout.inset)
         .padding(.top, 10)
-        .padding(.bottom, 8)
+        .padding(.bottom, 6)
         .frame(width: NativeMenuLayout.width)
     }
 }
@@ -75,115 +94,131 @@ struct NativeMenuOverviewView: View {
     let showAccount: Bool
     let showStatus: Bool
 
+    private var ringRows: [NativeMenuOverviewRow] {
+        Array(rows.filter { $0.remainingPercent != nil && !$0.hasError }.prefix(3))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
                 emptyState
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        if index > 0 {
-                            Divider().padding(.leading, 52).opacity(0.6)
-                        }
-                        rowView(row)
+                HStack(alignment: .center, spacing: 18) {
+                    if !ringRows.isEmpty {
+                        ConcentricQuotaRings(
+                            rings: ringRows.map {
+                                ConcentricQuotaRings.Ring(id: $0.id, remaining: $0.remainingPercent ?? 0,
+                                                          color: ProviderBrand.color(for: $0.providerID))
+                            },
+                            size: ringRows.count > 2 ? 104 : 92,
+                            lineWidth: ringRows.count > 2 ? 9 : 10)
                     }
+                    VStack(alignment: .leading, spacing: 11) {
+                        ForEach(rows) { row in
+                            legendRow(row)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-                        .fill(Color.primary.opacity(0.045)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+                .padding(.horizontal, NativeMenuLayout.inset)
+                .padding(.vertical, 12)
             }
 
             if totalCount > rows.count {
                 Text(L("%d more in Providers", totalCount - rows.count))
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.horizontal, NativeMenuLayout.inset)
+                    .padding(.bottom, 8)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
         .frame(width: NativeMenuLayout.width)
     }
 
     private var emptyState: some View {
-        DSCard(padding: 16) {
-            VStack(spacing: 6) {
-                Image(systemName: "sparkles.rectangle.stack")
-                    .font(.system(size: 26, weight: .regular))
-                    .foregroundColor(.accentColor)
-                Text(L("No providers enabled yet"))
-                    .font(.system(size: 13, weight: .semibold))
-                Text(L("Choose Set Up Providers… below to connect Claude, Codex, DeepSeek or another service."))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
+        VStack(spacing: 6) {
+            Image(systemName: "circle.dashed")
+                .font(.system(size: 30, weight: .ultraLight))
+                .foregroundColor(.secondary)
+            Text(L("No providers enabled yet"))
+                .font(.system(size: 13, weight: .medium))
+            Text(L("Choose Set Up Providers… below to connect Claude, Codex, DeepSeek or another service."))
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, NativeMenuLayout.inset)
+        .padding(.vertical, 16)
     }
 
-    private func rowView(_ row: NativeMenuOverviewRow) -> some View {
-        HStack(spacing: 11) {
-            ProviderBadge(providerID: row.providerID, size: 30)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
+    private func legendRow(_ row: NativeMenuOverviewRow) -> some View {
+        let color = ProviderBrand.color(for: row.providerID)
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle()
+                .fill(row.remainingPercent == nil && row.balanceText == nil ? Color.secondary.opacity(0.4) : color)
+                .frame(width: 7, height: 7)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
                     Text(row.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
                     if showStatus, row.hasError || row.health.isIncident {
-                        DSHealthDot(health: row.hasError ? .outage : row.health, size: 6)
+                        Circle()
+                            .fill(DS.healthColor(row.hasError ? .outage : row.health))
+                            .frame(width: 5, height: 5)
                     }
                 }
-                // "Default" is the placeholder label of an unnamed token account.
-                if showAccount, let account = row.account, account != "Default" {
-                    Text(account)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                HStack(spacing: 4) {
-                    if row.hasError {
-                        DSChip(text: L("Connection error"), symbol: "exclamationmark.triangle.fill",
-                               tint: Color(nsColor: .systemRed))
-                    } else {
-                        if let label = row.quotaLabel {
-                            DSChip(text: label)
-                        }
-                        if let resetsAt = row.resetsAt, let countdown = DS.countdown(to: resetsAt) {
-                            DSChip(text: L("Resets in %@", countdown), symbol: "arrow.clockwise")
-                        }
-                    }
-                }
+                Text(detail(row))
+                    .font(.system(size: 10))
+                    .foregroundColor(row.hasError ? Color(nsColor: .systemRed) : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            Spacer(minLength: 6)
-            trailing(row)
+            Spacer(minLength: 4)
+            value(row)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
         .accessibilityElement(children: .combine)
     }
 
+    private func detail(_ row: NativeMenuOverviewRow) -> String {
+        if row.hasError { return L("Connection error") }
+        var parts: [String] = []
+        if row.balanceText != nil, row.remainingPercent == nil {
+            parts.append(L("Balance"))
+        } else if let label = row.quotaLabel {
+            parts.append(label)
+        }
+        if let resetsAt = row.resetsAt, let countdown = DS.countdown(to: resetsAt) {
+            parts.append(L("Resets in %@", countdown))
+        } else if showAccount, let account = row.account, account != "Default" {
+            parts.append(account)
+        }
+        return parts.joined(separator: " · ")
+    }
+
     @ViewBuilder
-    private func trailing(_ row: NativeMenuOverviewRow) -> some View {
-        if row.usedPercent != nil {
-            UsageRing(remaining: row.remainingPercent, size: 42, lineWidth: 4.5,
-                      showsUsed: quotaPresentation == .used)
-        } else if let balance = row.balanceText {
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(balance)
-                    .font(DS.numeral(15, weight: .bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                Text(L("Balance"))
-                    .font(.system(size: 10))
+    private func value(_ row: NativeMenuOverviewRow) -> some View {
+        if let remaining = row.remainingPercent {
+            let shown = quotaPresentation == .used ? 100 - remaining : remaining
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(String(format: "%.0f", shown))
+                    .font(.system(size: 20, weight: .light, design: .rounded).monospacedDigit())
+                    .foregroundColor(remaining < 15 ? Color(nsColor: .systemRed) : .primary)
+                Text("%")
+                    .font(.system(size: 11, weight: .light, design: .rounded))
                     .foregroundColor(.secondary)
             }
+        } else if let balance = row.balanceText {
+            Text(balance)
+                .font(.system(size: 15, weight: .light, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         } else {
-            UsageRing(remaining: nil, size: 42, lineWidth: 4.5)
+            Text("—")
+                .font(.system(size: 15, weight: .light, design: .rounded))
+                .foregroundColor(.secondary)
         }
     }
 }
@@ -204,166 +239,163 @@ struct NativeMenuProviderCardView: View {
     private var quotas: [DashboardQuotaLane] { Array(dashboard.quotas.prefix(4)) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             if showStatus, let status = dashboard.serviceStatus, status.health.isIncident {
-                banner(symbol: status.health.symbolName, tint: DS.healthColor(status.health),
-                       title: status.health.title, detail: status.displayText)
+                notice(symbol: status.health.symbolName, tint: DS.healthColor(status.health),
+                       text: "\(status.health.title) · \(status.displayText)")
             }
             if let error = dashboard.errorMessage {
-                banner(symbol: "exclamationmark.triangle.fill", tint: Color(nsColor: .systemRed),
-                       title: L("Connection error"), detail: error)
+                notice(symbol: "exclamationmark.triangle.fill", tint: Color(nsColor: .systemRed), text: error)
             }
 
             if let primary = quotas.first {
                 heroQuota(primary)
+                    .padding(.horizontal, NativeMenuLayout.inset)
+                    .padding(.vertical, 12)
             }
             if quotas.count > 1 {
-                DSCard(padding: 10) {
-                    VStack(spacing: 9) {
-                        ForEach(quotas.dropFirst()) { lane in
-                            compactQuota(lane)
-                        }
+                VStack(spacing: 10) {
+                    ForEach(quotas.dropFirst()) { lane in
+                        compactQuota(lane)
                     }
                 }
+                .padding(.horizontal, NativeMenuLayout.inset)
+                .padding(.bottom, 12)
             }
 
             if showMetrics, !visibleMetrics.isEmpty {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
-                          alignment: .leading, spacing: 8) {
+                MenuHairline()
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                          alignment: .leading, spacing: 12) {
                     ForEach(visibleMetrics) { metric in
-                        metricTile(metric)
+                        metricCell(metric)
                     }
                 }
+                .padding(.horizontal, NativeMenuLayout.inset)
+                .padding(.vertical, 12)
             }
 
             footer
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
         .frame(width: NativeMenuLayout.width)
     }
 
     private func heroQuota(_ lane: DashboardQuotaLane) -> some View {
-        DSCard(padding: 12) {
-            HStack(spacing: 14) {
-                UsageRing(remaining: lane.remainingPercent, size: 64, lineWidth: 6.5,
-                          showsUsed: quotaPresentation == .used)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(lane.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                    Text(quotaPresentation == .used
-                         ? L("%@%% used", String(format: "%.0f", lane.usedPercent))
-                         : L("%@%% remaining", String(format: "%.0f", lane.remainingPercent)))
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                    if showResetTime {
-                        HStack(spacing: 4) {
-                            if let resetsAt = lane.resetsAt, let countdown = DS.countdown(to: resetsAt) {
-                                DSChip(text: L("Resets in %@", countdown), symbol: "arrow.clockwise")
-                            } else if let reset = lane.resetText {
-                                DSChip(text: reset, symbol: "arrow.clockwise")
-                            }
-                        }
-                        if let pace = lane.paceDescription() {
-                            Text(pace)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(DS.tone(remaining: lane.remainingPercent))
-                                .lineLimit(2)
-                        }
+        HStack(spacing: 16) {
+            UsageRing(remaining: lane.remainingPercent, size: 78, lineWidth: 7,
+                      showsUsed: quotaPresentation == .used, tint: tint, numeralWeight: .light)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(lane.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                Text(quotaPresentation == .used
+                     ? L("%@%% used", String(format: "%.0f", lane.usedPercent))
+                     : L("%@%% remaining", String(format: "%.0f", lane.remainingPercent)))
+                    .font(.system(size: 11))
+                    .foregroundColor(lane.remainingPercent < 15 ? Color(nsColor: .systemRed) : .secondary)
+                if showResetTime {
+                    if let resetsAt = lane.resetsAt, let countdown = DS.countdown(to: resetsAt) {
+                        Label(L("Resets in %@", countdown), systemImage: "arrow.clockwise")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    } else if let reset = lane.resetText {
+                        Label(reset, systemImage: "arrow.clockwise")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    if let pace = lane.paceDescription() {
+                        Label(pace, systemImage: "speedometer")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(DS.tone(remaining: lane.remainingPercent))
+                            .lineLimit(2)
                     }
                 }
-                Spacer(minLength: 0)
             }
+            Spacer(minLength: 0)
         }
     }
 
     private func compactQuota(_ lane: DashboardQuotaLane) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(lane.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12))
                     .lineLimit(1)
-                Spacer(minLength: 4)
                 if showResetTime, let resetsAt = lane.resetsAt, let countdown = DS.countdown(to: resetsAt) {
-                    Text(L("Resets in %@", countdown))
+                    Text(countdown)
                         .font(.system(size: 10))
                         .foregroundColor(.secondary)
                 }
+                Spacer(minLength: 4)
                 Text(String(format: "%.0f%%", quotaPresentation == .used ? lane.usedPercent : lane.remainingPercent))
-                    .font(DS.numeral(12, weight: .bold))
-                    .foregroundColor(DS.tone(remaining: lane.remainingPercent))
+                    .font(.system(size: 13, weight: .light, design: .rounded).monospacedDigit())
+                    .foregroundColor(lane.remainingPercent < 15 ? Color(nsColor: .systemRed) : .primary)
             }
-            UsageBar(fill: quotaPresentation == .used ? lane.usedPercent : lane.remainingPercent,
-                     remaining: lane.remainingPercent, height: 5)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(tint.opacity(0.14))
+                    Capsule()
+                        .fill(LinearGradient(colors: [tint.opacity(0.7), tint], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(3, geometry.size.width * CGFloat(
+                            (quotaPresentation == .used ? lane.usedPercent : lane.remainingPercent) / 100)))
+                }
+            }
+            .frame(height: 3)
         }
         .accessibilityElement(children: .combine)
     }
 
-    private func metricTile(_ metric: DashboardMetric) -> some View {
+    private func metricCell(_ metric: DashboardMetric) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(metric.title)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 10))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             Text(metric.value)
-                .font(DS.numeral(16, weight: .bold))
+                .font(.system(size: 18, weight: .light, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.045)))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
     private var footer: some View {
         let hasMore = dashboard.metrics.count > 4 || dashboard.quotas.count > 4
-        let subscription = SubscriptionTimingView(dashboard: dashboard, compact: true)
+        MenuHairline()
         VStack(alignment: .leading, spacing: 5) {
-            subscription
+            SubscriptionTimingView(dashboard: dashboard, compact: true)
             if snapshot.provider == "claude" {
                 Label(dashboard.hasClaudeSharedQuota
                       ? L("Quota · all devices including web chat")
                       : L("Shared quota unavailable"),
                       systemImage: "laptopcomputer.and.iphone")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
                 if showMetrics {
                     Label(L("Tokens & cost · local logs only"), systemImage: "internaldrive")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
                 }
             }
             if hasMore {
                 Text(L("More information is available in Detailed Dashboard"))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
             }
         }
+        .font(.system(size: 10))
+        .foregroundColor(.secondary)
+        .padding(.horizontal, NativeMenuLayout.inset)
+        .padding(.vertical, 10)
     }
 
-    private func banner(symbol: String, tint: Color, title: String, detail: String) -> some View {
-        DSCard(padding: 10, tint: tint) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: symbol)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 12, weight: .semibold))
-                    Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                        .lineLimit(3)
-                }
-            }
+    private func notice(symbol: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(2)
         }
+        .foregroundColor(tint)
+        .padding(.horizontal, NativeMenuLayout.inset)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
     }
 }

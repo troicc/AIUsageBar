@@ -7,18 +7,70 @@ struct ClaudeQuotaSample: Codable, Hashable, Identifiable {
     var id: Date { timestamp }
 }
 
+/// Where a rise in the shared quota most likely came from.
+enum ClaudeQuotaSource: String, Hashable {
+    /// Claude Code on this Mac was active during the rise.
+    case claudeCode
+    /// No local Claude Code activity: web, desktop or another machine.
+    case otherDevices
+}
+
 struct ClaudeQuotaSeries: Hashable, Identifiable {
     let id: String
     let title: String
     let samples: [ClaudeQuotaSample]
+    /// Source of each rising segment, keyed by the timestamp of the sample
+    /// that ends it. Empty until `attributed(activeMinutes:)` runs.
+    var sources: [Date: ClaudeQuotaSource] = [:]
+    /// Percentage points of this window consumed in the series, by source.
+    var claudeCodePoints: Double = 0
+    var otherDevicePoints: Double = 0
+
+    var attributedPoints: Double { claudeCodePoints + otherDevicePoints }
+
+    /// Splits quota consumption between local Claude Code and everything
+    /// else. A rise counts as Claude Code when Claude Code logged any usage
+    /// between the two samples (with `slack` before the first, since the
+    /// server reports usage with a short delay); otherwise it came from web,
+    /// desktop or another device. Overlapping use is credited to Claude
+    /// Code, so the other-device share is a lower bound.
+    func attributed(activeMinutes: Set<Int>, slack: TimeInterval = 180) -> ClaudeQuotaSeries {
+        var result = self
+        result.sources = [:]
+        result.claudeCodePoints = 0
+        result.otherDevicePoints = 0
+        guard samples.count > 1 else { return result }
+        for index in 1..<samples.count {
+            let previous = samples[index - 1]
+            let next = samples[index]
+            let delta = next.usedPercent - previous.usedPercent
+            guard Self.connects(previous, next), delta > 0.05 else { continue }
+            let first = Int(previous.timestamp.addingTimeInterval(-slack).timeIntervalSince1970 / 60)
+            let last = Int(next.timestamp.timeIntervalSince1970 / 60)
+            let local = first <= last && (first...last).contains { activeMinutes.contains($0) }
+            result.sources[next.timestamp] = local ? .claudeCode : .otherDevices
+            if local { result.claudeCodePoints += delta } else { result.otherDevicePoints += delta }
+        }
+        return result
+    }
 
     /// Do not draw consumption through resets, corrections or an unobserved interval.
     static func connects(_ previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Bool {
         next.timestamp > previous.timestamp &&
             next.timestamp.timeIntervalSince(previous.timestamp) <= 3600 &&
-            previous.resetsAt == next.resetsAt &&
+            sameWindow(previous.resetsAt, next.resetsAt) &&
             !(previous.resetsAt.map { $0 <= next.timestamp } ?? false) &&
             next.usedPercent >= previous.usedPercent
+    }
+
+    /// The server reports a window's reset time with a few seconds of drift
+    /// between requests; a real new window moves it by hours.
+    static func sameWindow(_ left: Date?, _ right: Date?) -> Bool {
+        switch (left, right) {
+        case (nil, nil): return true
+        case let (l?, r?): return abs(l.timeIntervalSince(r)) <= 300
+        default: return false
+        }
     }
 }
 

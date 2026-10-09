@@ -27,10 +27,31 @@ enum UIGallery {
             print("FAIL: could not fetch snapshots: \(error.localizedDescription)")
             exit(1)
         }
+        // Claude quota history from a copy of the app's file, so the gallery
+        // never writes to the running app's data.
+        let historyCopy = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ui-gallery-quota-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: historyCopy, withIntermediateDirectories: true)
+        if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            try? FileManager.default.copyItem(
+                at: support.appendingPathComponent("AIUsageBar/claude-quota-history-v1.json"),
+                to: historyCopy.appendingPathComponent("claude-quota-history-v1.json"))
+        }
+        let quotaHistory = ClaudeQuotaHistoryStore(storageDirectory: historyCopy)
+        let activeMinutes = await ClaudeCodeActivityLog().activeMinutes()
         var dashboards: [String: ProviderDashboard] = [:]
         for snapshot in snapshots {
             let supplement = await client.dashboardSupplementJSON(provider: snapshot.provider)
-            dashboards[snapshot.id] = DashboardParser.dashboard(snapshot: snapshot, supplementalJSON: supplement)
+            var dashboard = DashboardParser.dashboard(snapshot: snapshot, supplementalJSON: supplement)
+            if snapshot.provider == "claude" {
+                dashboard.claudeQuotaHistory = quotaHistory.record(snapshot: snapshot)
+                    .map { $0.attributed(activeMinutes: activeMinutes) }
+                for series in dashboard.claudeQuotaHistory {
+                    print(String(format: "%@: %d samples, Claude Code %.1f pts, other %.1f pts",
+                                 series.id, series.samples.count, series.claudeCodePoints, series.otherDevicePoints))
+                }
+            }
+            dashboards[snapshot.id] = dashboard
         }
         print("snapshots: \(snapshots.map(\.provider).joined(separator: ", "))")
 
@@ -45,6 +66,11 @@ enum UIGallery {
                                                  refresh: {}, openDashboard: {}, openStatus: {}, openSettings: {})
                         .frame(width: 390, height: 560),
                        appearance: appearance, output: output.appendingPathComponent("detail-\(snapshot.provider)-\(mode).png"))
+            }
+            if let claude = snapshots.first(where: { $0.provider == "claude" }), let dashboard = dashboards[claude.id] {
+                render(ClaudeQuotaHistoryView(dashboard: dashboard).padding(16).frame(width: 390)
+                        .background(Color(nsColor: .windowBackgroundColor)),
+                       appearance: appearance, output: output.appendingPathComponent("quota-trend-\(mode).png"))
             }
             let entries = snapshots.map { AllProviderEntry(id: $0.id, dashboard: dashboards[$0.id] ?? DashboardParser.dashboard(snapshot: $0)) }
             render(AllProvidersContentView(entries: entries, isRefreshing: false, error: nil, refresh: {}, openSettings: {})

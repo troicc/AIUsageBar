@@ -36,18 +36,20 @@ enum DS {
             || [L("Unavailable"), L("Not exposed"), "Unavailable", "Not exposed"].contains(value)
     }
 
-    /// "3h 14m" in English, "3小时14分" in Chinese.
+    /// Compact countdown: "3h 14m" / "6d 12h" / "9m" in English,
+    /// "3小时14分" / "6天12小时" / "9分" in Chinese.
     static func countdown(to date: Date, now: Date = Date()) -> String? {
-        let interval = date.timeIntervalSince(now)
+        let interval = Int(date.timeIntervalSince(now))
         guard interval > 0 else { return nil }
-        let formatter = DateComponentsFormatter()
-        var calendar = Calendar.current
-        calendar.locale = Locale(identifier: L10n.usesChinese ? "zh_Hans" : "en_US")
-        formatter.calendar = calendar
-        formatter.unitsStyle = .abbreviated
-        formatter.maximumUnitCount = 2
-        formatter.allowedUnits = interval >= 86_400 ? [.day, .hour] : [.hour, .minute]
-        return formatter.string(from: interval)?.replacingOccurrences(of: " ", with: L10n.usesChinese ? "" : " ")
+        let days = interval / 86_400, hours = interval % 86_400 / 3600, minutes = interval % 3600 / 60
+        let chinese = L10n.usesChinese
+        if days > 0 {
+            return chinese ? "\(days)天\(hours)小时" : "\(days)d \(hours)h"
+        }
+        if hours > 0 {
+            return chinese ? "\(hours)小时\(minutes)分" : "\(hours)h \(minutes)m"
+        }
+        return chinese ? "\(max(1, minutes))分" : "\(max(1, minutes))m"
     }
 }
 
@@ -137,10 +139,10 @@ struct ProviderBadge: View {
             Image(systemName: providerID.map(ProviderBrand.symbol(for:)) ?? "chart.bar.xaxis")
                 .font(.system(size: size * 0.5, weight: .semibold))
                 .foregroundColor(.white)
-                .shadow(color: Color.black.opacity(0.18), radius: 0.5, y: 0.5)
         }
         .frame(width: size, height: size)
-        .shadow(color: color.opacity(0.25), radius: 2, y: 1)
+        // No shadows: dozens of badges scroll in Settings and each shadow
+        // costs an offscreen render pass per frame.
         .accessibilityHidden(true)
     }
 }
@@ -182,6 +184,9 @@ struct UsageRing: View {
     var showsValue = true
     /// Show and draw the used share instead (color still follows what is left).
     var showsUsed = false
+    /// Brand color for the arc; nil colors it by how much is left.
+    var tint: Color? = nil
+    var numeralWeight: Font.Weight = .bold
 
     private var displayed: Double? {
         remaining.map { showsUsed ? 100 - $0 : $0 }
@@ -189,10 +194,10 @@ struct UsageRing: View {
 
     var body: some View {
         let fraction = CGFloat(max(0, min(100, displayed ?? 0)) / 100)
-        let colors = DS.gradient(remaining: remaining)
+        let colors = tint.map { [$0.opacity(0.7), $0] } ?? DS.gradient(remaining: remaining)
         ZStack {
             Circle()
-                .stroke(Color.primary.opacity(0.09), lineWidth: lineWidth)
+                .stroke((tint ?? Color.primary).opacity(tint == nil ? 0.09 : 0.16), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: remaining == nil ? 0 : max(0.001, fraction))
                 .stroke(
@@ -204,7 +209,7 @@ struct UsageRing: View {
                 if let displayed = displayed {
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
                         Text(String(format: "%.0f", max(0, min(100, displayed))))
-                            .font(DS.numeral(size * (displayed >= 99.5 ? 0.26 : 0.32), weight: .bold))
+                            .font(DS.numeral(size * (displayed >= 99.5 ? 0.26 : 0.32), weight: numeralWeight))
                         Text("%")
                             .font(.system(size: size * 0.17, weight: .semibold, design: .rounded))
                             .foregroundColor(.secondary)
@@ -278,6 +283,45 @@ struct Sparkline: View {
                 .stroke(tint, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
             }
         }
+        .accessibilityHidden(true)
+    }
+}
+
+/// Activity-style concentric rings: one ring per provider, outermost first,
+/// each in its brand color, showing how much of its headline quota is left.
+struct ConcentricQuotaRings: View {
+    struct Ring: Identifiable {
+        let id: String
+        let remaining: Double
+        let color: Color
+    }
+
+    let rings: [Ring]
+    var size: CGFloat = 92
+    var lineWidth: CGFloat = 9
+    var spacing: CGFloat = 2.5
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(rings.enumerated()), id: \.element.id) { index, ring in
+                let diameter = size - CGFloat(index) * (lineWidth + spacing) * 2
+                let fraction = CGFloat(max(0, min(100, ring.remaining)) / 100)
+                ZStack {
+                    Circle().stroke(ring.color.opacity(0.16), lineWidth: lineWidth)
+                    Circle()
+                        .trim(from: 0, to: max(0.001, fraction))
+                        .stroke(
+                            AngularGradient(colors: [ring.color.opacity(0.72), ring.color],
+                                            center: .center,
+                                            startAngle: .degrees(0),
+                                            endAngle: .degrees(360 * Double(max(0.001, fraction)))),
+                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: max(0, diameter - lineWidth), height: max(0, diameter - lineWidth))
+            }
+        }
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }

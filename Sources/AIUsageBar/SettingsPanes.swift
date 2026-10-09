@@ -7,7 +7,9 @@ import SwiftUI
 /// tiles, and a scrolling pane of inset grouped cards on the right.
 struct SettingsRootView: View {
     @ObservedObject var store: SettingsStore
-    @ObservedObject var dashboardStore: DashboardStore
+    /// Not observed here: a refresh would otherwise re-render the whole
+    /// window (and stutter scrolling). Panes that show live data observe it.
+    let dashboardStore: DashboardStore
 
     var body: some View {
         HStack(spacing: 0) {
@@ -18,7 +20,7 @@ struct SettingsRootView: View {
             Group {
                 switch store.tab {
                 case .general: GeneralSettingsView(store: store)
-                case .menuBar: MenuBarSettingsView(store: store, snapshots: dashboardStore.snapshots)
+                case .menuBar: LiveMenuBarSettingsView(store: store, dashboardStore: dashboardStore)
                 case .notifications: NotificationSettingsView(store: store)
                 case .usageData: TokenHistorySettingsView(dashboardStore: dashboardStore)
                 case .providers: ProviderSettingsView(store: store, dashboardStore: dashboardStore)
@@ -34,6 +36,16 @@ struct SettingsRootView: View {
         .task {
             if !store.isBusy { await store.reloadProviders() }
         }
+    }
+}
+
+/// Observes the dashboard only while the Menu Bar pane is visible.
+private struct LiveMenuBarSettingsView: View {
+    @ObservedObject var store: SettingsStore
+    @ObservedObject var dashboardStore: DashboardStore
+
+    var body: some View {
+        MenuBarSettingsView(store: store, snapshots: dashboardStore.snapshots)
     }
 }
 
@@ -160,7 +172,6 @@ struct SettingsIconTile: View {
             Image(systemName: symbol)
                 .font(.system(size: size * 0.5, weight: .semibold))
                 .foregroundColor(.white)
-                .shadow(color: Color.black.opacity(0.15), radius: 0.5, y: 0.5)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -196,7 +207,6 @@ struct SettingsCard<Content: View>: View {
             .overlay(
                 RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
                     .strokeBorder(SettingsSurface.border, lineWidth: 0.5))
-            .shadow(color: Color.black.opacity(0.035), radius: 1.5, y: 0.5)
     }
 }
 

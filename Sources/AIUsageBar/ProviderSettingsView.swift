@@ -246,7 +246,10 @@ private struct SettingsProviderList: View {
                 .padding(.bottom, 10)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
+                // A plain VStack builds the ~65 rows once. LazyVStack created
+                // rows (and their AppKit switches) while scrolling, which
+                // pushed frames past the 16 ms budget.
+                VStack(alignment: .leading, spacing: 2) {
                     if !enabled.isEmpty {
                         listHeader(L("Enabled"), count: enabled.count)
                         ForEach(enabled) { provider in row(provider) }

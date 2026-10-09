@@ -60,6 +60,30 @@ struct ClaudeQuotaHistoryRegression {
         let broken = ClaudeQuotaHistoryStore(storageDirectory: directory)
         _ = broken.record(snapshot: first, now: start)
         precondition(broken.persistenceError != nil && (try! Data(contentsOf: file)) == Data("broken".utf8))
+        // Attribution: rises during local Claude Code activity count as
+        // Claude Code; rises with no local activity count as other devices.
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let reset = t0.addingTimeInterval(4 * 3600)
+        let attributionSeries = ClaudeQuotaSeries(id: "five-hour", title: "5 hours", samples: [
+            ClaudeQuotaSample(timestamp: t0, usedPercent: 10, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(600), usedPercent: 25, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(1200), usedPercent: 31, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(1800), usedPercent: 31, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(9000), usedPercent: 50, resetsAt: reset),
+        ])
+        let activeMinute = Int(t0.addingTimeInterval(300).timeIntervalSince1970 / 60)
+        let attributed = attributionSeries.attributed(activeMinutes: [activeMinute])
+        precondition(abs(attributed.claudeCodePoints - 15) < 0.001, "rise with local activity is Claude Code")
+        precondition(abs(attributed.otherDevicePoints - 6) < 0.001, "rise without local activity is other devices")
+        precondition(attributed.sources[t0.addingTimeInterval(600)] == .claudeCode)
+        precondition(attributed.sources[t0.addingTimeInterval(1200)] == .otherDevices)
+        precondition(attributed.sources[t0.addingTimeInterval(9000)] == nil, "gaps over an hour are not attributed")
+        let slackMinute = Int(t0.addingTimeInterval(1200 - 120).timeIntervalSince1970 / 60)
+        precondition(attributionSeries.attributed(activeMinutes: [slackMinute])
+            .sources[t0.addingTimeInterval(1800)] == nil, "flat intervals are not attributed")
         print("PASS | Claude shared quota: identity/source isolation, timestamps, resets, gaps, persistence and token separation")
+        let drifted = ClaudeQuotaSample(timestamp: t0.addingTimeInterval(600), usedPercent: 12, resetsAt: reset.addingTimeInterval(37))
+        precondition(ClaudeQuotaSeries.connects(attributionSeries.samples[0], drifted), "seconds of reset drift stay one window")
+        print("PASS | Claude quota attribution: local Claude Code vs other devices, gaps and flat intervals")
     }
 }

@@ -28,10 +28,10 @@ private func isoDate(_ value: String) -> Date {
     return result
 }
 
-let fixtureOverride = ProcessInfo.processInfo.environment["CODEXBAR_TOKEN_HISTORY_FIXTURE_DIRECTORY"]
+let fixtureOverride = ProcessInfo.processInfo.environment["AIUSAGEBAR_TOKEN_HISTORY_FIXTURE_DIRECTORY"]
 let directory = fixtureOverride.map { URL(fileURLWithPath: $0, isDirectory: true) } ??
     FileManager.default.temporaryDirectory
-        .appendingPathComponent("codexbar-token-history-regression-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("aiusagebar-token-history-regression-\(UUID().uuidString)", isDirectory: true)
 defer {
     if fixtureOverride == nil { try? FileManager.default.removeItem(at: directory) }
 }
@@ -169,5 +169,14 @@ let attributes = try FileManager.default.attributesOfItem(atPath: historyURL.pat
 if let permissions = attributes[.posixPermissions] as? NSNumber {
     require(permissions.intValue & 0o777 == 0o600, "token history file permissions are not 0600")
 }
+
+// Mixed snake_case and camelCase spellings of one field normalize to the
+// same key. This used to trap in Dictionary(uniqueKeysWithValues:).
+let mixedKeys = snapshot(provider: "claude", account: "mixed@example.com", rawJSON: "{}")
+_ = store.record(snapshot: mixedKeys, supplementalJSON: """
+{"provider":"claude","daily":[{"date":"2026-08-29","input_tokens":5,"inputTokens":5,
+  "totalTokens":10,"total_tokens":10,"modelsUsed":["claude-x"]}]}
+""", now: now)
+require(store.accounts().contains(where: { $0.providerID == "claude" }), "mixed-key payload was not recorded")
 
 print("Local token history regression tests passed.")

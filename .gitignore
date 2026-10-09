@@ -8,3 +8,4 @@ releases/
 Config/build.env
 Scripts/__pycache__/
 *.pyc
+artifacts/

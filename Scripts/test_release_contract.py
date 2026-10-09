@@ -69,16 +69,29 @@ assert '"$VENDOR/.source-fingerprint"' in fetch_engine
 # both architectures by reusing a previously validated helper/framework bundle.
 # This is deliberately separate from the authoritative full engine build.
 for token in [
-    'CODEXBAR_LOCAL_TEMPLATE_APP',
+    'AIUSAGEBAR_LOCAL_TEMPLATE_APP',
     '-target "$arch-apple-macosx12.0"',
     'lipo -create',
     'codesign --force --deep --sign -',
-    'CODEXBAR_SMOKE_OFFLINE=1',
+    'AIUSAGEBAR_SMOKE_OFFLINE=1',
     'This bundle is ad-hoc signed and is not a release artifact.',
 ]:
     assert token in local_validation, token
 assert '"$ROOT/Scripts/build_engine.sh"' not in local_validation
-assert 'BACKUP_APP="$BACKUP_ROOT/CodexBar Monterey.app"' in local_install
+assert 'BACKUP_APP="$BACKUP_ROOT/AIUsageBar.app"' in local_install
 assert "restore_previous_app" in local_install
+assert 'LEGACY_APP="/Applications/CodexBar Monterey.app"' in local_install
+assert 'mv "$LEGACY_BACKUP_APP" "$LEGACY_APP"' in local_install
+
+# The bundled engine ships under the app's own name, and the app points it at
+# the app's config file; older installs are migrated on launch.
+assert 'cp "$ENGINE" "$APP/Contents/Helpers/AIUsageEngine"' in build_app
+cli_client = (ROOT / "Sources" / "AIUsageBar" / "CLIClient.swift").read_text()
+assert 'static let engineExecutableName = "AIUsageEngine"' in cli_client
+assert "ProviderConfigStore.engineConfigEnvironmentKey" in cli_client
+app_delegate = (ROOT / "Sources" / "AIUsageBar" / "AppDelegate.swift").read_text()
+assert app_delegate.index("LegacyMigration.run()") < app_delegate.index("MenuController(")
+assert 'LEGACY_HELPER="CodexBarCLI"' in local_validation
+assert 'set_plist_string CFBundleIdentifier "$BUNDLE_ID"' in local_validation
 
 print("Release contract tests passed.")

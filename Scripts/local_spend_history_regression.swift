@@ -37,7 +37,7 @@ calendar.locale = Locale(identifier: "en_US_POSIX")
 calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
 let directory = FileManager.default.temporaryDirectory
-    .appendingPathComponent("CodexBarMonterey-local-spend-\(UUID().uuidString)", isDirectory: true)
+    .appendingPathComponent("AIUsageBar-local-spend-\(UUID().uuidString)", isDirectory: true)
 defer { try? FileManager.default.removeItem(at: directory) }
 
 let start = calendar.date(from: DateComponents(
@@ -131,5 +131,29 @@ let crossMidnight = localSpend(midnightStore.record(
 require(number(crossMidnight, "todaySpend") == 0, "cross-midnight spend was assigned to the next day")
 require(number(crossMidnight, "last30DaysSpend") == 0, "cross-midnight spend entered the 30-day total")
 require(integer(crossMidnight, "unattributedIntervals") == 1, "cross-midnight uncertainty was not disclosed")
+
+// A corrupt history file must be preserved, not silently replaced by a
+// one-sample ledger; a newer-format file must not be rewritten at all.
+let corruptDirectory = directory.appendingPathComponent("corrupt", isDirectory: true)
+try? FileManager.default.createDirectory(at: corruptDirectory, withIntermediateDirectories: true)
+let corruptURL = corruptDirectory.appendingPathComponent("local-spend-history.json")
+let corruptBytes = Data("{not json".utf8)
+try? corruptBytes.write(to: corruptURL)
+_ = LocalSpendHistoryStore(directoryURL: corruptDirectory, calendar: calendar).record(
+    provider: "moonshot", accountKey: "corrupt", rawJSON: balanceJSON(10), now: start)
+let corruptCopies = ((try? FileManager.default.contentsOfDirectory(atPath: corruptDirectory.path)) ?? [])
+    .filter { $0.contains("unreadable") }
+require(corruptCopies.count == 1, "corrupt history was not backed up before reuse")
+let copied = try? Data(contentsOf: corruptDirectory.appendingPathComponent(corruptCopies[0]))
+require(copied == corruptBytes, "backup did not keep the corrupt bytes")
+
+let futureDirectory = directory.appendingPathComponent("future", isDirectory: true)
+try? FileManager.default.createDirectory(at: futureDirectory, withIntermediateDirectories: true)
+let futureURL = futureDirectory.appendingPathComponent("local-spend-history.json")
+let futureBytes = Data(#"{"version":2,"ledgers":{}}"#.utf8)
+try? futureBytes.write(to: futureURL)
+_ = LocalSpendHistoryStore(directoryURL: futureDirectory, calendar: calendar).record(
+    provider: "moonshot", accountKey: "future", rawJSON: balanceJSON(10), now: start)
+require((try? Data(contentsOf: futureURL)) == futureBytes, "newer-format history was overwritten")
 
 print("Local spend history regression tests passed.")

@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP="$(mktemp -d /private/tmp/codexbar-model-visual.XXXXXX)"
+TMP="$(mktemp -d /private/tmp/aiusagebar-model-visual.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 OUTPUT="${1:-$ROOT/artifacts/model-attribution-visual}"
 SOURCES=()
-for source in "$ROOT"/Sources/CodexBarMonterey/*.swift; do
-  [[ "$(basename "$source")" == "CodexBarMontereyApp.swift" ]] && continue
+for source in "$ROOT"/Sources/AIUsageBar/*.swift; do
+  [[ "$(basename "$source")" == "AIUsageBarApp.swift" ]] && continue
   SOURCES+=("$source")
 done
 xcrun swiftc -module-cache-path "$TMP/module-cache" \

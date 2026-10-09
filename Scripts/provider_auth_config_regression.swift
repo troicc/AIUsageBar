@@ -10,7 +10,7 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 let temp = FileManager.default.temporaryDirectory
-    .appendingPathComponent("CodexBarProviderAuth-\(UUID().uuidString)", isDirectory: true)
+    .appendingPathComponent("AIUsageBarProviderAuth-\(UUID().uuidString)", isDirectory: true)
 try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: temp) }
 
@@ -30,7 +30,7 @@ let initial: [String: Any] = [
 let initialData = try JSONSerialization.data(withJSONObject: initial, options: [.prettyPrinted])
 try initialData.write(to: configURL)
 
-let store = CodexBarConfigStore(
+let store = ProviderConfigStore(
     environment: ["CODEXBAR_CONFIG": configURL.path],
     homeDirectory: temp)
 
@@ -170,7 +170,7 @@ expect(restoredRoot["unknownRoot"] as? String == "preserve-me", "Backup lost unk
 // If save created a brand-new config, rollback should remove it instead of
 // leaving an unverified credential behind.
 let newConfigURL = temp.appendingPathComponent("new-config.json")
-let newStore = CodexBarConfigStore(
+let newStore = ProviderConfigStore(
     environment: ["CODEXBAR_CONFIG": newConfigURL.path],
     homeDirectory: temp)
 let absentBackup = try newStore.makeBackup()
@@ -181,5 +181,32 @@ _ = try newStore.save(
 expect(FileManager.default.fileExists(atPath: newConfigURL.path), "Test config was not created")
 try newStore.restore(absentBackup)
 expect(!FileManager.default.fileExists(atPath: newConfigURL.path), "Rollback did not remove a newly created config")
+
+// Without an override the app keeps its own config, and a config written by
+// builds from before the rename is moved into place exactly once.
+let migrationHome = temp.appendingPathComponent("migration-home", isDirectory: true)
+let legacyConfig = migrationHome.appendingPathComponent(".config/codexbar/config.json")
+try FileManager.default.createDirectory(
+    at: legacyConfig.deletingLastPathComponent(),
+    withIntermediateDirectories: true)
+try initialData.write(to: legacyConfig)
+let migratingStore = ProviderConfigStore(environment: [:], homeDirectory: migrationHome)
+let appConfig = try migratingStore.resolvedConfigURL()
+expect(appConfig.path.hasSuffix("Library/Application Support/AIUsageBar/config.json"), "Unexpected app config path \(appConfig.path)")
+let movedFrom = try migratingStore.migrateLegacyConfigIfNeeded()
+expect(movedFrom == legacyConfig, "Legacy config was not migrated")
+expect((try? Data(contentsOf: appConfig)) == initialData, "Migrated config contents changed")
+expect(!FileManager.default.fileExists(atPath: legacyConfig.path), "Legacy config was left behind")
+let migratedMode = (try FileManager.default.attributesOfItem(atPath: appConfig.path)[.posixPermissions] as? NSNumber)?.intValue
+expect(migratedMode == 0o600, "Migrated config is not private")
+try FileManager.default.createDirectory(
+    at: legacyConfig.deletingLastPathComponent(),
+    withIntermediateDirectories: true)
+try initialData.write(to: legacyConfig)
+let secondMove = try migratingStore.migrateLegacyConfigIfNeeded()
+expect(secondMove == nil, "Migration overwrote an existing app config")
+let overrideStore = ProviderConfigStore(environment: ["CODEXBAR_CONFIG": configURL.path], homeDirectory: migrationHome)
+let overrideMove = try overrideStore.migrateLegacyConfigIfNeeded()
+expect(overrideMove == nil, "Migration ignored an explicit config override")
 
 print("All-provider authentication/config regression tests passed.")

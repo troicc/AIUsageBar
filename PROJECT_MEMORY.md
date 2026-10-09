@@ -1,6 +1,58 @@
-# CodexBar Monterey 项目记忆 / Agent Handoff
+# AIUsageBar（原 CodexBar Monterey）项目记忆 / Agent Handoff
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
+
+## 2026-10-09 审查问题全量修复、中文界面与文件拆分（提交状态以 Git 为准）
+
+用户要求“全都修，然后改名”。本轮修复了审查列出的问题；新功能建议（余额可用天数、额度重置提醒、导出扩展、全局快捷键）**未做**。
+
+- 正确性：
+  - z.ai 五小时趋势在 <5 分钟刷新时只会滑动一个点 → 保留锚点、只刷新末点（`LocalQuotaTrendStore`）。
+  - 花费账本读失败会被单样本覆盖 → 损坏文件先备份为 `*.unreadable-<ts>.json`；读不到或版本更新时不写（`LocalSpendHistoryStore`），只在变化时写，并改为紧凑 JSON。
+  - 同 ID 快照让 `Dictionary(uniqueKeysWithValues:)` 崩溃 → 改为后者覆盖（`ProviderAlertController`）。
+  - 键名大小写混用（`input_tokens`/`inputTokens`）导致崩溃 → 新增 `JSONHelpers.swift` 的 `JSONKeys.normalizedDictionary`（按原键排序后取第一个），三个解析器统一使用。
+  - 打开菜单会推迟自动刷新 → 下次刷新以 `lastRefreshStartedAt` 为锚点计算；新增唤醒后刷新。
+  - CLI 超时只发 SIGTERM → `ProcessTree` 用 sysctl 枚举子孙进程，先 SIGTERM，3 秒后 SIGKILL，并支持 Task 取消。
+- 性能：
+  - `cost` 扫描在菜单交互时有 5 分钟、刷新后有 90 秒的缓存；同账号的扫描去重（`scansInFlight`）。扫描不再阻塞刷新，刷新完成后并发执行，下一次刷新也不会取消它。
+  - 每次刷新历史存储只记录一次（`recordLocalHistory`）。
+  - 日期 formatter 缓存在 `FlexibleDate`。
+  - Providers 子菜单改为懒加载（`menuNeedsUpdate`）。
+  - `claude auth status` 缓存 10 分钟。
+  - 历史存储仍在主线程执行，只是减少了重复工作。
+- UX：
+  - 打开中的菜单会通过 `liveUpdaters` 随 store 变化实时刷新。
+  - 首次启动没有服务商时自动打开设置 → Providers，菜单里也有“Set Up Providers…”；“showing saved data”只在确实有旧数据时显示。
+  - 额度通知按窗口标题分别判断阈值，新窗口只建立基线。
+  - 图表 VoiceOver 摘要包含范围、最新值和峰值。
+- 删除了无人引用的约 700 行固定深色 `DashboardPopoverView` 及其组件；详情 popover 补上 ⌘R/⌘,。
+- 拆分文件：
+  - Settings 拆为 `SettingsWindowController`/`SettingsStore`/`SettingsPanes`/`ProviderSettingsView`/`TokenHistorySettingsView`。
+  - 视图拆为 `DashboardViews`/`ProviderHistoryCharts`/`AllProvidersView`。
+  - 拆分时顶层 `private` 类型改为 internal。
+- 中文界面：
+  - `L10n.swift` 提供 `L()` 和 `L(fmt, args…)`；英文原文是键，四张表 `L10n+Menu/Settings/Dashboard/Data.swift` 共约 520 条。
+  - 语言设置在通用设置里（跟随系统 / English / 简体中文），存于 `appLanguage`。
+  - “跟随系统”只在 `.app` 内生效；命令行回归测试始终输出英文，所以英文断言不变。
+  - 图表日期标签用 `FlexibleDate.label`（中文为“9月8日”）。
+  - Info.plist 声明 `CFBundleLocalizations` en/zh-Hans 和 `CFBundleAllowMixedLocalizations`。
+  - `test_ui_contract.py` 会检查翻译表没有重复键，且每个 `L("…")` 都有译文；`CostHistoryPayload.swift` 和 `CurrencyDisplay.swift` 在测试里单独编译，不得调用 `L()`。
+- 验证：
+  - 通过：Swift 5.6/macOS 12 typecheck、全部 contract、cost/history/spend/token/quota/auth 回归（含新增的频繁刷新、损坏文件、混合键名、配置迁移用例）、视觉渲染 5 项 PASS、双架构本地验证包加离线 smoke。
+  - 中文界面用 `defaults write visual-qa appLanguage zh-Hans` 渲染并人工检查了浅色和深色截图。
+  - `CoreBehaviorTests` 新增的 JSONKeys/FlexibleDate/L10n/占位符一致性测试只在 CI 上跑。
+  - UI smoke 没有运行，因为它会迁移真实数据。
+- GitHub 仓库已由用户亲自改名为 `troicc/AIUsageBar`（2026-10-09），本地 origin 已指向 `https://github.com/troicc/AIUsageBar.git`。旧地址由 GitHub 自动跳转；appcast URL 由 CI 的 `github.repository` 生成，会自动跟随。
+
+## 2026-10-09 应用彻底改名为 AIUsageBar（含迁移；提交状态以 Git 为准）
+
+- 用户要求彻底去掉 “codex” 字样并接受迁移。已改：显示名/包名 `AIUsageBar.app`、可执行文件 `AIUsageBar`、SwiftPM target/模块 `AIUsageBar`（`Sources/AIUsageBar`、`Tests/AIUsageBarTests`）、默认 Bundle ID `io.github.troicc.aiusagebar`（GitHub 未配置 `vars.BUNDLE_ID`；旧安装是 `com.example.codexbar.monterey`）、数据目录 `~/Library/{Application Support,Caches}/AIUsageBar`、通知/frame/状态项 autosave 名、环境变量前缀 `AIUSAGEBAR_*`、release zip `AIUsageBar-<version>.zip`、CI artifact、Release 标题、README/LICENSE。
+- 内置引擎在包内改名为 `Contents/Helpers/AIUsageEngine`（上游 SwiftPM 产物仍叫 `CodexBarCLI`，`build_app.sh` 复制时改名）。provider 配置从引擎默认 `~/.config/codexbar/config.json` 改为 `~/Library/Application Support/AIUsageBar/config.json`，`CLIClient` 每次通过 `CODEXBAR_CONFIG`（引擎读取的上游变量名，不能改）传给引擎。patch 文件改名为 `Patches/Engine*.patch`，live usage 变量改为 `AIUSAGEBAR_INCLUDE_LIVE_USAGE`；CLIClient 同时传旧变量名，兼容改名前构建的引擎。
+- `LegacyMigration.run()` 在 `applicationDidFinishLaunching` 最先执行，每步都只在“旧的存在、新的不存在”时动作：复制旧 Bundle ID 的 UserDefaults（键名里的旧名字也一并改写）后删除旧域；移动/合并旧数据目录；移动旧 config（0600）并删除旧文件；卸载旧 LaunchAgent 并重新开启开机启动；清理旧 Caches/HTTPStorages 和 `Caches/CodexBarCLI`。降级回旧版会找不到这些数据。
+- `install_local.sh` 同时停止新旧进程，并把 `/Applications/CodexBar Monterey.app` 一起备份移走；`build_local_validation.sh` 可以用改名前的模板，会转换可执行文件名、引擎名、`CFBundleExecutable` 和 Bundle ID。
+- **刻意保留的 codex 字样**：Codex 作为 provider（OpenAI 产品名、provider id `codex`）；上游归属与接口（`steipete/CodexBar`、`Vendor/CodexBar`、`CodexBarCore/CodexBarCLI` 构建产物、`CODEXBAR_CONFIG`、`CODEXBAR_USE_LOCAL_SWEETCOOKIEKIT`、THIRD_PARTY/MIT 声明、provider 文档链接）；`LegacyMigration`/安装脚本里的旧名常量；引擎内部写死的 `~/Library/{Application Support,Caches}/CodexBar` 缓存目录；GitHub 仓库名 `troicc/CodexBarMonterey`（改名属于对外操作，需用户确认；appcast URL 来自 `github.repository`，会跟着变）。
+- 本次验证：UI/release/smoke/patcher contract、provider auth（含新增配置迁移回归）、cost history parser、`bash -n`、plist lint、Swift 5.6 macOS 12 typecheck 均通过；以已安装旧版为模板的 `build_local_validation.sh` 双架构构建和离线 bundle smoke 也通过。没有运行 UI smoke，因为它会对真实用户数据执行迁移。完整 SwiftPM 测试只在 CI 上跑。
+- 本文件下方历史段落中的旧名称、路径是当时事实，不要批量改写。
 
 ## 2026-09-25 最新源码与安装包上传授权
 
@@ -51,9 +103,9 @@
 - 订阅费用不从额度或套餐名称猜测。现有 usage/identity contract 没有可靠月实付金额，Claude `providerCost` 是 Extra usage 而非月订阅费。设置 General → Currency & subscriptions 存储 `subscriptionDefaultUSD.codex/claude`；卡片可用 `monthlySubscriptionUSD.<provider>.<snapshot ID hash>` 按账号覆盖或恢复默认。个人 $100/$125 通过本机偏好设置保存，不硬编码为所有用户的产品价格。零月费不做除法，非法/负数金额不参与比较。
 - `CurrencyDisplay.swift` 统一格式化原始 USD/CNY 金额；其他币种保留原币。摘要、余额、历史图、订阅及模型费用随选择即时切换；DashboardStore 缓存完整 presentation supplemental JSON，币种/汇率变化只重新解析显示，不重复采集或写入历史。原始账本、导出、定价引擎和模型归属不改变。
 - `CurrencySettingsStore` 启动和每小时经 HTTPS 获取 `https://api.frankfurter.dev/v2/rate/USD/CNY`，设置里可手动刷新；15 秒超时、请求合并、1 小时缓存、响应币种/日期/有限正数校验，拒绝倒退的汇率日期。UserDefaults 持久化 quote 和 last checked；失败保留旧汇率和明确错误，首次无汇率时保持原币种，绝不把美元数值直接加人民币符号。Frankfurter 是每日参考汇率而非秒级外汇行情，设置和人民币卡片明确显示来源/汇率日期；2026-09-14 连通性探测返回 6.7065。
-- 新增 `usage_value_regression.swift`，接入 `test_cost_history_parser.sh`，覆盖 30d 边界、未知/部分价格、模型归属、订阅比值、USD/CNY 双向换算、缓存重载、HTTP 失败和非法汇率保留旧值；`CODEXBAR_TEST_LIVE_FX=1` 额外验证生产 URLSession 请求。SwiftPM CoreBehaviorTests 增加对应关键行为，完整 SwiftPM 6.2 仍需 CI，本机 Swift 5.6 使用轻量回归。
+- 新增 `usage_value_regression.swift`，接入 `test_cost_history_parser.sh`，覆盖 30d 边界、未知/部分价格、模型归属、订阅比值、USD/CNY 双向换算、缓存重载、HTTP 失败和非法汇率保留旧值；`AIUSAGEBAR_TEST_LIVE_FX=1` 额外验证生产 URLSession 请求。SwiftPM CoreBehaviorTests 增加对应关键行为，完整 SwiftPM 6.2 仍需 CI，本机 Swift 5.6 使用轻量回归。
 - 视觉测试扩展生产费用卡片 362/560×460 的 USD/CNY 浅深色矩阵、设置币种区 650×420 浅深色，以及现有 Provider/All Providers/Usage Data 回归；断言单一主滚动视图、视口边界和禁止横向溢出。最终 `bash Scripts/test_visual_model_attribution.sh /private/tmp/codexbar-usage-value-final-qa` 通过，8 张费用卡片、4 张币种设置、单 Provider 与 All Providers 浅深色截图已打开检查；大金额和长模型名不重叠或横向裁切。
-- `CODEXBAR_TEST_LIVE_FX=1 bash Scripts/test_cost_history_parser.sh`、UI/release/offline smoke contracts、provider auth、66-provider catalog、Monterey patcher、shell syntax 和 `git diff --check` 通过；生产 URLSession 实测成功返回 `USD/CNY 6.7065, published 2026-09-14`，不是仅 curl 探测。SwiftPM 新测试尚未通过 CI 执行，不能记为 SwiftPM 6.2 全套通过。
+- `AIUSAGEBAR_TEST_LIVE_FX=1 bash Scripts/test_cost_history_parser.sh`、UI/release/offline smoke contracts、provider auth、66-provider catalog、Monterey patcher、shell syntax 和 `git diff --check` 通过；生产 URLSession 实测成功返回 `USD/CNY 6.7065, published 2026-09-14`，不是仅 curl 探测。SwiftPM 新测试尚未通过 CI 执行，不能记为 SwiftPM 6.2 全套通过。
 - `Scripts/build_local_validation.sh` 最终生成 `/private/tmp/codexbar-usage-value-final-build/CodexBar Monterey Local Validation.app`（0.10.0 / build 202609142135），Universal 2、macOS 12、deep codesign、65-provider offline smoke 均通过；真实运行 `/private/tmp/codexbar-usage-value-runtime.txt` 为 `PASS | snapshots=4 overviewItems=11`。helper/Sparkle 复用安装模板，属于本地 ad-hoc 验证包，不是正式 Release。
 - 已通过 `replace_macos_app.py --keep-backup` 安装至 `/Applications/CodexBar Monterey.app`，完整包 fingerprint `d72684bfedb8b86fb30dde3edf0c43db1d14659f0582395036558cbbc5496ed9`。旧版备份 `/Applications/.codex-backup-CodexBar Monterey-2c3e39abcbbf4e129d02332b2a9b2c00.app`；安装时确认无旧进程，安装版未自动重启。已把用户指定的 100/125 写入本机 `com.example.codexbar.monterey` 的两个订阅默认值，并逐项回读验证；显示币种默认 USD，可在设置切换人民币。工作树留在 main，未提交/推送/打 tag。
 

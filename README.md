@@ -1,8 +1,10 @@
-# CodexBar Monterey Full
+# AIUsageBar
 
-A macOS 12 compatibility shell that preserves CodexBar's complete upstream provider engine and Sparkle-ready whole-bundle packaging.
+> Renamed from an earlier project name. On first launch the app moves settings, usage history, the provider config file and the launch-at-login agent from installs made before the rename.
 
-The project pins an upstream CodexBar release in `ENGINE_VERSION`, builds its shared `CodexBarCore + CodexBarCLI`, embeds the CLI as the provider engine, and replaces only the macOS 14 UI layer with AppKit compatible with Monterey.
+A macOS 12 menu-bar app for AI usage, quotas and spend. It bundles the complete provider engine from the upstream [CodexBar](https://github.com/steipete/CodexBar) project (MIT) and ships as a Sparkle-ready whole bundle.
+
+The project pins an upstream CodexBar release in `ENGINE_VERSION`, builds its shared `CodexBarCore + CodexBarCLI`, embeds the CLI as the app's usage engine (`Contents/Helpers/AIUsageEngine`), and replaces only the macOS 14 UI layer with AppKit compatible with Monterey.
 
 Included:
 
@@ -31,15 +33,15 @@ GitHub Actions runs behavioral Swift tests, Monterey backport regressions, relea
 
 ## Local UI validation on Swift 5.6
 
-When the machine cannot load the Swift 6.2 package manifest, it can still build the current AppKit/SwiftUI shell directly for both `arm64` and `x86_64`. The script copies `CodexBarCLI`, Sparkle, the bundle identifier, and other resources from an already installed or otherwise validated template app, replaces only the UI executable, ad-hoc signs the result, and runs the recursive offline bundle checks:
+When the machine cannot load the Swift 6.2 package manifest, it can still build the current AppKit/SwiftUI shell directly for both `arm64` and `x86_64`. The script copies the usage engine, Sparkle, and other resources from an already installed or otherwise validated template app, replaces only the UI executable, ad-hoc signs the result, and runs the recursive offline bundle checks:
 
 ```bash
-CODEXBAR_LOCAL_TEMPLATE_APP="/Applications/CodexBar Monterey.app" \
-CODEXBAR_LOCAL_VERSION="0.10.0" \
+AIUSAGEBAR_LOCAL_TEMPLATE_APP="/Applications/AIUsageBar.app" \
+AIUSAGEBAR_LOCAL_VERSION="0.10.0" \
 Scripts/build_local_validation.sh
 ```
 
-To exercise the real menu and provider-detail popover before the script exits, quit any running CodexBar instance and add `CODEXBAR_LOCAL_RUN_UI_SMOKE=1`. Install an accepted local bundle with `Scripts/install_local.sh "/absolute/path/to/the.app"`; the installer keeps the previous app in a recoverable `/private/tmp` backup.
+To exercise the real menu and provider-detail popover before the script exits, quit any running AIUsageBar instance and add `AIUSAGEBAR_LOCAL_RUN_UI_SMOKE=1`. Install an accepted local bundle with `Scripts/install_local.sh "/absolute/path/to/the.app"`; the installer keeps the previous app in a recoverable `/private/tmp` backup.
 
 This is a UI/interaction validation path, not a release build: the helper and Sparkle framework come from the template, the main executable uses the no-Sparkle fallback, and the bundle is only ad-hoc signed. GitHub Actions or a complete Swift 6.2 local build remains authoritative for the pinned provider engine, Sparkle linkage, and release archive.
 

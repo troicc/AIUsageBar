@@ -88,7 +88,7 @@ struct UsageValueRegression {
         precondition(store.quote == quote && store.error != nil)
         let reloaded = CurrencySettingsStore(defaults: defaults, session: session)
         precondition(reloaded.quote == quote)
-        if ProcessInfo.processInfo.environment["CODEXBAR_TEST_LIVE_FX"] == "1" {
+        if ProcessInfo.processInfo.environment["AIUSAGEBAR_TEST_LIVE_FX"] == "1" {
             defaults.removeObject(forKey: CurrencyDisplay.quoteKey)
             defaults.removeObject(forKey: CurrencyDisplay.checkedKey)
             let live = CurrencySettingsStore(defaults: defaults)

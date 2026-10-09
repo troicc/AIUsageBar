@@ -4,7 +4,7 @@
 
 - Upstream owns every provider descriptor, fetch strategy, parser, cookie importer, OAuth/API/CLI probe, cost scan, config schema, and JSON contract.
 - This repository owns only the macOS 12 menu UI, settings facade, login item fallback, package assembly, and update feed.
-- The UI never calls provider endpoints directly. It launches the bundled `CodexBarCLI` and decodes its JSON.
+- The UI never calls provider endpoints directly. It launches the bundled usage engine (`Contents/Helpers/AIUsageEngine`, built from upstream's `CodexBarCLI` product) with `CODEXBAR_CONFIG` pointing at the app's own config file, and decodes its JSON.
 
 ## Versioning invariant
 

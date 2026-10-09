@@ -1,6 +1,8 @@
-# CodexBar Monterey Full
+# AIUsageBar
 
-这是面向 **macOS 12 Monterey** 的 CodexBar 兼容工程。目标不是只支持 Codex，而是保留上游 CodexBar 的完整 provider 数据引擎和整包更新架构，只替换无法在 Monterey 上运行的 macOS 14 UI 层。安全自动更新是否可用仍取决于实际签名、密钥和 appcast 配置。
+> 本项目已改名为 AIUsageBar。首次启动时，应用会把改名前安装留下的设置、用量历史、provider 配置文件和开机启动项自动迁移过来。
+
+AIUsageBar 是面向 **macOS 12 Monterey** 的 AI 用量 / 额度 / 花费菜单栏应用。它内置上游开源项目 [CodexBar](https://github.com/steipete/CodexBar)（MIT）的完整 provider 数据引擎，并采用整包更新架构，UI 层为 Monterey 原生重写。安全自动更新是否可用仍取决于实际签名、密钥和 appcast 配置。
 
 当前固定的上游引擎版本见 `ENGINE_VERSION`。构建时会拉取该 tag 的 `CodexBarCore + CodexBarCLI`，因此 provider 列表、抓取器、解析器、认证来源、状态探针和配置结构都由上游维护，而不是在本项目里手工复制一份 provider 清单。
 
@@ -43,19 +45,19 @@
 ## 架构
 
 ```text
-CodexBar Monterey.app
-├── Contents/MacOS/CodexBarMonterey       AppKit 菜单栏 shell，最低 macOS 12
-├── Contents/Helpers/CodexBarCLI          上游完整 provider 引擎
+AIUsageBar.app
+├── Contents/MacOS/AIUsageBar             AppKit 菜单栏 shell，最低 macOS 12
+├── Contents/Helpers/AIUsageEngine        上游完整 provider 引擎（上游构建产物 CodexBarCLI）
 └── Contents/Frameworks/Sparkle.framework 整包自动更新
 ```
 
 刷新时 AppKit shell 默认执行：
 
 ```bash
-CodexBarCLI --format json --json-only --status
+AIUsageEngine --format json --json-only --status
 ```
 
-这只查询配置中已启用的 provider，不会用 `--provider all` 强行同时访问几十个未配置服务。App 使用容错 parser 生成图形化 dashboard；如需查看尚未映射到卡片的原始 provider 字段，可直接运行内置 `CodexBarCLI`。
+这只查询配置中已启用的 provider，不会用 `--provider all` 强行同时访问几十个未配置服务。App 使用容错 parser 生成图形化 dashboard；如需查看尚未映射到卡片的原始 provider 字段，可直接运行内置 `AIUsageEngine`。
 
 ## 最快落地：用 GitHub Actions 构建
 
@@ -89,7 +91,7 @@ Scripts/setup_sparkle_keys.sh
 1. 下载 Sparkle 2.9.4 官方工具（不依赖 Homebrew）；
 2. 在登录钥匙串生成 EdDSA 密钥；
 3. 输出 `SUPublicEDKey`；
-4. 把私钥导出到 `~/.config/codexbar-monterey/sparkle-private-key`，权限为 `0600`。
+4. 把私钥导出到 `~/.config/aiusagebar/sparkle-private-key`，权限为 `0600`。
 
 私钥绝不能提交到仓库。
 
@@ -99,7 +101,7 @@ Scripts/setup_sparkle_keys.sh
 
 | 类型 | 名称 | 内容 |
 |---|---|---|
-| Repository variable | `BUNDLE_ID` | 例如 `com.yourname.codexbar.monterey` |
+| Repository variable | `BUNDLE_ID` | 例如 `com.yourname.aiusagebar` |
 | Repository secret | `SPARKLE_PUBLIC_KEY` | `generate_keys` 输出的 `SUPublicEDKey` |
 | Repository secret | `SPARKLE_PRIVATE_KEY` | 私钥文件的完整内容 |
 
@@ -121,17 +123,17 @@ release workflow 在证书齐全时使用 hardened runtime、secure timestamp、
 推送 `main` 后，打开 GitHub **Actions → Build Monterey Compatibility App**。成功后下载 artifact：
 
 ```text
-CodexBar-Monterey.zip
+AIUsageBar.zip
 ```
 
-解压并把 `CodexBar Monterey.app` 放入 `/Applications`。首次打开 ad-hoc 构建时，可能需要在 Finder 中右键 → Open；正式 Developer ID + notarized 版本没有这类自签名摩擦。
+解压并把 `AIUsageBar.app` 放入 `/Applications`。首次打开 ad-hoc 构建时，可能需要在 Finder 中右键 → Open；正式 Developer ID + notarized 版本没有这类自签名摩擦。
 
 ### 5. 发布自动更新
 
 在 `main` 上准备好发布提交后，推送一个未使用过的语义版本 tag（例如 `v0.7.0`）。release workflow 会拒绝不属于 `origin/main` 的 tag：
 
 ```bash
-git tag -a v0.7.0 -m "CodexBar Monterey 0.7.0"
+git tag -a v0.7.0 -m "AIUsageBar 0.7.0"
 git push origin v0.7.0
 ```
 
@@ -149,7 +151,7 @@ git push origin v0.7.0
 以后每次发布只需要在 `main` 的目标提交上提高版本并推送新 tag，例如：
 
 ```bash
-git tag -a v0.7.1 -m "CodexBar Monterey 0.7.1"
+git tag -a v0.7.1 -m "AIUsageBar 0.7.1"
 git push origin v0.7.1
 ```
 
@@ -176,14 +178,16 @@ git push origin v0.7.1
 配置路径：
 
 ```text
-~/.config/codexbar/config.json
-~/.codexbar/config.json   # 旧安装兼容
+~/Library/Application Support/AIUsageBar/config.json
 ```
+
+应用启动引擎时会通过 `CODEXBAR_CONFIG` 指向这个文件。改名前的版本使用引擎默认的 `~/.config/codexbar/config.json`（或 `~/.codexbar/config.json`），首次启动时会自动移动过来。
 
 常用的 base URL、workspace、region、token account 和 manual cookie 可在设置中配置；更复杂的 organization/AWS 等字段继续使用上游 config schema。也可在内置 helper 上直接运行上游 CLI：
 
 ```bash
-HELPER="/Applications/CodexBar Monterey.app/Contents/Helpers/CodexBarCLI"
+HELPER="/Applications/AIUsageBar.app/Contents/Helpers/AIUsageEngine"
+export CODEXBAR_CONFIG="$HOME/Library/Application Support/AIUsageBar/config.json"
 
 "$HELPER" config providers --json --pretty
 "$HELPER" config enable --provider grok
@@ -212,7 +216,7 @@ printf '%s' "$OPENROUTER_API_KEY" | \
 `fetch_engine.sh` 还会读取该 CodexBar tag 实际依赖的 SweetCookieKit 和 Commander 版本，而不是硬编码。Commander 本身在 0.2.1 的 manifest 中声明 macOS 14，因此脚本会把它固定到本地 checkout、改写上游依赖并与 CodexBar、SweetCookieKit 一起降到 macOS 12。脚本支持：
 
 ```text
-Patches/CodexBar.patch
+Patches/Engine.patch
 Patches/SweetCookieKit.patch
 Patches/Commander.patch
 ```
@@ -235,39 +239,39 @@ Scripts/test_provider_auth.sh
 
 ### Swift 5.6 本机直接生成临时验证 App
 
-已经安装过一个可用 CodexBar Monterey 时，可以不解析 SwiftPM 6.2 manifest，直接把当前工作树的 AppKit/SwiftUI UI shell 分别编译为 `arm64`、`x86_64`，再合并为 Universal 2：
+已经安装过一个可用 AIUsageBar（或改名前的旧版）时，可以不解析 SwiftPM 6.2 manifest，直接把当前工作树的 AppKit/SwiftUI UI shell 分别编译为 `arm64`、`x86_64`，再合并为 Universal 2：
 
 ```bash
-CODEXBAR_LOCAL_TEMPLATE_APP="/Applications/CodexBar Monterey.app" \
-CODEXBAR_LOCAL_DISPLAY_NAME="CodexBar Monterey Local Validation" \
-CODEXBAR_LOCAL_VERSION="0.10.0" \
+AIUSAGEBAR_LOCAL_TEMPLATE_APP="/Applications/AIUsageBar.app" \
+AIUSAGEBAR_LOCAL_DISPLAY_NAME="AIUsageBar Local Validation" \
+AIUSAGEBAR_LOCAL_VERSION="0.10.0" \
 Scripts/build_local_validation.sh
 ```
 
 脚本会自动：
 
-1. 为两种架构直接编译当前 `Sources/CodexBarMonterey/*.swift`；
-2. 从模板 App 复制 `CodexBarCLI`、Sparkle framework、Info.plist 和资源；
+1. 为两种架构直接编译当前 `Sources/AIUsageBar/*.swift`；
+2. 从模板 App 复制使用量引擎、Sparkle framework、Info.plist 和资源（改名前的模板会被转换成新的可执行文件名、引擎名和 Bundle ID）；
 3. 替换 UI 主程序、更新本地显示版本并执行 ad-hoc 签名；
 4. 检查全部 Mach-O 的 Universal 2 架构、macOS 12 deployment target、签名和离线 provider registry。
 
-如需让应用自动打开真实菜单、构建 Provider 菜单并实际 show/close 详情 popover 后退出，先关闭正在运行的 CodexBar，再增加：
+如需让应用自动打开真实菜单、构建 Provider 菜单并实际 show/close 详情 popover 后退出，先关闭正在运行的 AIUsageBar，再增加：
 
 ```bash
-CODEXBAR_LOCAL_RUN_UI_SMOKE=1 \
-CODEXBAR_LOCAL_VERSION="0.10.0" \
+AIUSAGEBAR_LOCAL_RUN_UI_SMOKE=1 \
+AIUSAGEBAR_LOCAL_VERSION="0.10.0" \
 Scripts/build_local_validation.sh
 ```
 
 接受该验证包后，可把脚本最后输出的绝对路径传给安全安装器：
 
 ```bash
-Scripts/install_local.sh "/private/tmp/.../CodexBar Monterey Local Validation.app"
+Scripts/install_local.sh "/private/tmp/.../AIUsageBar Local Validation.app"
 ```
 
-安装器会先停止旧进程，把原 `/Applications/CodexBar Monterey.app` 移到独立的 `/private/tmp/codexbar-install-backup.*` 目录，再复制、验签并启动新 App；安装或验签失败时会自动恢复旧 App。
+安装器会先停止旧进程，把原 `/Applications/AIUsageBar.app`（以及改名前的旧版应用，如存在）移到独立的 `/private/tmp/aiusagebar-install-backup.*` 目录，再复制、验签并启动新 App；安装或验签失败时会自动恢复旧 App。
 
-这个路径只用于快速验证当前 UI 和交互，不能冒充正式 Release：`CodexBarCLI` 与 Sparkle 来自模板 App，直接编译的主程序走无 Sparkle fallback，签名是 ad-hoc，而且不会重新构建 `ENGINE_VERSION` 对应的 provider engine。正式可信结果仍以 GitHub Actions 或 Swift 6.2 完整本地构建为准。
+这个路径只用于快速验证当前 UI 和交互，不能冒充正式 Release：使用量引擎与 Sparkle 来自模板 App，直接编译的主程序走无 Sparkle fallback，签名是 ad-hoc，而且不会重新构建 `ENGINE_VERSION` 对应的 provider engine。正式可信结果仍以 GitHub Actions 或 Swift 6.2 完整本地构建为准。
 
 使用 Swift 6.2 的完整本地构建：
 
@@ -277,7 +281,7 @@ cp Config/build.env.example Config/build.env
 
 Scripts/fetch_engine.sh
 Scripts/build_universal.sh
-Scripts/check_macos12_compat.sh "dist/universal/CodexBar Monterey.app"
+Scripts/check_macos12_compat.sh "dist/universal/AIUsageBar.app"
 Scripts/install_local.sh
 ```
 
@@ -286,7 +290,7 @@ Scripts/install_local.sh
 在 Intel 和 Apple Silicon 的 macOS 12.6.x 各执行一次：
 
 ```bash
-Scripts/smoke_test_app.sh "/Applications/CodexBar Monterey.app"
+Scripts/smoke_test_app.sh "/Applications/AIUsageBar.app"
 ```
 
 脚本检查：

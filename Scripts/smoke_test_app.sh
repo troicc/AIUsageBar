@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="${1:-/Applications/CodexBar Monterey.app}"
+APP="${1:-/Applications/AIUsageBar.app}"
 [[ -d "$APP" ]] || { echo "App not found: $APP" >&2; exit 1; }
 
-MAIN="$APP/Contents/MacOS/CodexBarMonterey"
-HELPER="$APP/Contents/Helpers/CodexBarCLI"
+MAIN="$APP/Contents/MacOS/AIUsageBar"
+HELPER="$APP/Contents/Helpers/AIUsageEngine"
 [[ -x "$MAIN" ]] || { echo "Main executable missing: $MAIN" >&2; exit 1; }
 [[ -x "$HELPER" ]] || { echo "CLI helper missing: $HELPER" >&2; exit 1; }
 
@@ -44,12 +44,17 @@ printf '%s\n' "$PROVIDERS_JSON"
 PROVIDER_COUNT="$(printf '%s\n' "$PROVIDERS_JSON" | python3 "$SCRIPT_DIR/validate_provider_catalog.py" --min-count 60)"
 echo "Validated $PROVIDER_COUNT registered providers."
 
-if [[ "${CODEXBAR_SMOKE_OFFLINE:-0}" == "1" ]]; then
+if [[ "${AIUSAGEBAR_SMOKE_OFFLINE:-0}" == "1" ]]; then
   echo "== Offline provider probe =="
   echo "Skipped live usage fetching: the clean CI runner intentionally has no provider credentials, browser sessions, or provider CLIs."
   echo "The provider registry, CLI executable, bundle signing, architectures, and deployment targets were validated offline."
 else
   echo "== Enabled-provider probe =="
+  # Probe the same provider config the app uses, unless one was given.
+  APP_CONFIG="$HOME/Library/Application Support/AIUsageBar/config.json"
+  if [[ -z "${CODEXBAR_CONFIG:-}" && -f "$APP_CONFIG" ]]; then
+    export CODEXBAR_CONFIG="$APP_CONFIG"
+  fi
   set +e
   OUTPUT="$("$HELPER" --format json --json-only --status 2>&1)"
   STATUS=$?

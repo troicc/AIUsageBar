@@ -17,7 +17,7 @@ func sampledValues(_ source: String?) -> [Double] {
 }
 
 let directory = FileManager.default.temporaryDirectory
-    .appendingPathComponent("CodexBarMonterey-five-hour-trend-\(UUID().uuidString)", isDirectory: true)
+    .appendingPathComponent("AIUsageBar-five-hour-trend-\(UUID().uuidString)", isDirectory: true)
 defer { try? FileManager.default.removeItem(at: directory) }
 
 // Put the five-hour window in the secondary slot and give other windows larger
@@ -114,3 +114,15 @@ require(sampledValues(legacyStore.record(snapshot: legacySnapshot, now: start)) 
         "legacy payload did not fall back to the primary window")
 
 print("Local z.ai five-hour quota trend regression tests passed.")
+
+// Adaptive refresh runs every two minutes. The series must keep growing
+// (anchors every ~5 minutes) while the newest point stays current.
+let frequentDirectory = directory.appendingPathComponent("frequent", isDirectory: true)
+let frequent = LocalQuotaTrendStore(storageDirectory: frequentDirectory)
+var latest: String?
+for step in 0...10 {
+    latest = frequent.record(snapshot: snapshot, now: start.addingTimeInterval(TimeInterval(step * 120)))
+}
+let frequentCount = sampledValues(latest).count
+require(frequentCount >= 4, "two-minute refreshes collapsed the trend to \(frequentCount) point(s)")
+print("Quota trend store frequent-refresh regression passed.")

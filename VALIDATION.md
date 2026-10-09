@@ -94,4 +94,4 @@ and asynchronous `sleep(until:)`.
 - Retained the delegate across the blocking AppKit run loop using `withExtendedLifetime`.
 - Added a fast `Preflight menu app target` workflow step before the provider engine build.
 - Reordered `build_universal.sh` so the lightweight AppKit target compiles before the expensive upstream engine for each architecture.
-- Compiled the exact `CodexBarMontereyApp.swift` and `AppDelegate.swift` against a synthetic actor-annotated AppKit module under Swift 6.2; the previous MainActor isolation error no longer reproduces.
+- Compiled the exact `AIUsageBarApp.swift` and `AppDelegate.swift` against a synthetic actor-annotated AppKit module under Swift 6.2; the previous MainActor isolation error no longer reproduces.

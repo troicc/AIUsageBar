@@ -7,9 +7,9 @@ for arch in arm64 x86_64; do
   # errors before spending several minutes compiling the provider engine.
   "$ROOT/Scripts/build_app.sh" "$arch"
 done
-A="$ROOT/dist/arm64/CodexBar Monterey.app"
-X="$ROOT/dist/x86_64/CodexBar Monterey.app"
-OUT="$ROOT/dist/universal/CodexBar Monterey.app"
+A="$ROOT/dist/arm64/AIUsageBar.app"
+X="$ROOT/dist/x86_64/AIUsageBar.app"
+OUT="$ROOT/dist/universal/AIUsageBar.app"
 rm -rf "$OUT"
 ditto "$A" "$OUT"
 
@@ -74,12 +74,12 @@ done < <(find "$OUT" -type f -print0)
 ENV_CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY-}"
 set -a
 # shellcheck disable=SC1090
-source "${CODEXBAR_MONTEREY_ENV:-$ROOT/Config/build.env}"
+source "${AIUSAGEBAR_ENV:-$ROOT/Config/build.env}"
 set +a
 if [[ -n "$ENV_CODE_SIGN_IDENTITY" ]]; then
   CODE_SIGN_IDENTITY="$ENV_CODE_SIGN_IDENTITY"
 fi
 "$ROOT/Scripts/sign_app.sh" "$OUT"
 mkdir -p "$ROOT/releases"
-ditto -c -k --sequesterRsrc --keepParent "$OUT" "$ROOT/releases/CodexBar-Monterey-${APP_VERSION}.zip"
-echo "$ROOT/releases/CodexBar-Monterey-${APP_VERSION}.zip"
+ditto -c -k --sequesterRsrc --keepParent "$OUT" "$ROOT/releases/AIUsageBar-${APP_VERSION}.zip"
+echo "$ROOT/releases/AIUsageBar-${APP_VERSION}.zip"

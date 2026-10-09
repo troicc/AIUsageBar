@@ -44,9 +44,9 @@ jobs:
         run: |
           cp Config/build.env.example Config/build.env
           BUNDLE_ID_VALUE="${{ vars.BUNDLE_ID }}"
-          BUNDLE_ID_VALUE="${BUNDLE_ID_VALUE:-com.example.codexbar.monterey}"
+          BUNDLE_ID_VALUE="${BUNDLE_ID_VALUE:-io.github.troicc.aiusagebar}"
           PUBLIC_KEY_VALUE="${SPARKLE_PUBLIC_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}"
-          sed -i '' "s|com.yourname.codexbar.monterey|$BUNDLE_ID_VALUE|" Config/build.env
+          sed -i '' "s|com.yourname.aiusagebar|$BUNDLE_ID_VALUE|" Config/build.env
           sed -i '' "s|PASTE_GENERATE_KEYS_PUBLIC_KEY_HERE|$PUBLIC_KEY_VALUE|" Config/build.env
           sed -i '' "s|YOUR_GITHUB_USER/YOUR_REPO|${{ github.repository }}|" Config/build.env
       - name: Run Swift package tests
@@ -54,16 +54,16 @@ jobs:
       - name: Preflight menu app target
         run: |
           export MACOSX_DEPLOYMENT_TARGET=12.0
-          swift build -c release --arch arm64 --product CodexBarMonterey
+          swift build -c release --arch arm64 --product AIUsageBar
       - name: Build universal app
         run: Scripts/build_universal.sh
       - name: Verify minimum OS
-        run: Scripts/check_macos12_compat.sh "dist/universal/CodexBar Monterey.app"
+        run: Scripts/check_macos12_compat.sh "dist/universal/AIUsageBar.app"
       - name: Offline bundle smoke test
         env:
-          CODEXBAR_SMOKE_OFFLINE: "1"
-        run: Scripts/smoke_test_app.sh "dist/universal/CodexBar Monterey.app"
+          AIUSAGEBAR_SMOKE_OFFLINE: "1"
+        run: Scripts/smoke_test_app.sh "dist/universal/AIUsageBar.app"
       - uses: actions/upload-artifact@v6
         with:
-          name: CodexBar-Monterey
+          name: AIUsageBar
           path: releases/*.zip

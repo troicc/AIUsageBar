@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 root = Path(__file__).resolve().parents[1]
-source = (root / "Sources/CodexBarMonterey/ProviderAuthentication.swift").read_text()
+source = (root / "Sources/AIUsageBar/ProviderAuthentication.swift").read_text()
 
 stable_match = re.search(r"static let stableProviderIDs: \[String\] = \[(.*?)\n    \]", source, re.S)
 assert stable_match, "stableProviderIDs not found"

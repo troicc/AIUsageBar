@@ -2,26 +2,26 @@
 import PackageDescription
 
 let package = Package(
-    name: "CodexBarMonterey",
+    name: "AIUsageBar",
     platforms: [.macOS(.v12)],
     products: [
-        .executable(name: "CodexBarMonterey", targets: ["CodexBarMonterey"]),
+        .executable(name: "AIUsageBar", targets: ["AIUsageBar"]),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.4"),
     ],
     targets: [
         .executableTarget(
-            name: "CodexBarMonterey",
+            name: "AIUsageBar",
             dependencies: [
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
-            path: "Sources/CodexBarMonterey"
+            path: "Sources/AIUsageBar"
         ),
         .testTarget(
-            name: "CodexBarMontereyTests",
-            dependencies: ["CodexBarMonterey"],
-            path: "Tests/CodexBarMontereyTests"
+            name: "AIUsageBarTests",
+            dependencies: ["AIUsageBar"],
+            path: "Tests/AIUsageBarTests"
         ),
     ],
     swiftLanguageModes: [.v5]

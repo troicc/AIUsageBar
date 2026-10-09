@@ -319,7 +319,7 @@ def apply_monterey_source_compat(codexbar: Path, project_root: Path) -> None:
     # A fixed upstream tag must contain these APIs; zero changes means the patch
     # silently stopped matching and should never proceed to a misleading build.
     if changed_files == 0 or total_changes == 0:
-        raise SystemExit("No CodexBar Monterey source transformations were applied")
+        raise SystemExit("No AIUsageBar source transformations were applied")
 
     core_changes, core_files = changes_by_target["CodexBarCore"]
     cli_changes, cli_files = changes_by_target["CodexBarCLI"]
@@ -350,9 +350,9 @@ def main() -> None:
     apply_monterey_source_compat(codexbar, project_root)
 
     patch_dir = project_root / "Patches"
-    apply_optional_patch(codexbar, patch_dir / "CodexBar.patch")
-    apply_optional_patch(codexbar, patch_dir / "CodexBarLiveUsage.patch")
-    apply_optional_patch(codexbar, patch_dir / "CodexBarFinanceProviders.patch")
+    apply_optional_patch(codexbar, patch_dir / "Engine.patch")
+    apply_optional_patch(codexbar, patch_dir / "EngineLiveUsage.patch")
+    apply_optional_patch(codexbar, patch_dir / "EngineFinanceProviders.patch")
     apply_optional_patch(sweet, patch_dir / "SweetCookieKit.patch")
     apply_optional_patch(commander, patch_dir / "Commander.patch")
 

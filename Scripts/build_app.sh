@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ENV_FILE="${CODEXBAR_MONTEREY_ENV:-$ROOT/Config/build.env}"
+ENV_FILE="${AIUSAGEBAR_ENV:-$ROOT/Config/build.env}"
 [[ -f "$ENV_FILE" ]] || { echo "Copy Config/build.env.example to Config/build.env first." >&2; exit 1; }
 # Explicit CI/shell values override the local config file.
 ENV_CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY-}"
@@ -15,19 +15,20 @@ if [[ -n "$ENV_CODE_SIGN_IDENTITY" ]]; then
 fi
 ARCH="${1:-$(uname -m)}"
 export MACOSX_DEPLOYMENT_TARGET=12.0
-swift build --package-path "$ROOT" -c release --arch "$ARCH" --product CodexBarMonterey
+swift build --package-path "$ROOT" -c release --arch "$ARCH" --product AIUsageBar
 APP_BIN_DIR="$(swift build --package-path "$ROOT" -c release --arch "$ARCH" --show-bin-path)"
-APPBIN="$APP_BIN_DIR/CodexBarMonterey"
+APPBIN="$APP_BIN_DIR/AIUsageBar"
 [[ -x "$APPBIN" ]] || { echo "App build output not found: $APPBIN" >&2; exit 1; }
 ENGINE="$ROOT/build/engine/$ARCH/CodexBarCLI"
 "$ROOT/Scripts/build_engine.sh" "$ARCH"
 [[ -x "$ENGINE" ]] || { echo "Provider engine was not produced: $ENGINE" >&2; exit 1; }
 
-APP="$ROOT/dist/$ARCH/CodexBar Monterey.app"
+APP="$ROOT/dist/$ARCH/AIUsageBar.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
-cp "$APPBIN" "$APP/Contents/MacOS/CodexBarMonterey"
-cp "$ENGINE" "$APP/Contents/Helpers/CodexBarCLI"
+cp "$APPBIN" "$APP/Contents/MacOS/AIUsageBar"
+# Upstream builds the engine as CodexBarCLI; it ships under the app's own name.
+cp "$ENGINE" "$APP/Contents/Helpers/AIUsageEngine"
 
 SPARKLE_SEARCH_ROOT="$ROOT/.build"
 SPARKLE="$(find "$SPARKLE_SEARCH_ROOT" -path '*/Sparkle.framework' -type d | head -1 || true)"
@@ -50,6 +51,6 @@ for key, value in values.items(): text = text.replace(key, value)
 target.write_text(text)
 PY
 
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/CodexBarMonterey" 2>/dev/null || true
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/AIUsageBar" 2>/dev/null || true
 "$ROOT/Scripts/sign_app.sh" "$APP"
 echo "$APP"

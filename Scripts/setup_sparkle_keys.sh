@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SPARKLE_VERSION="${SPARKLE_VERSION:-2.9.4}"
 TOOLS_ROOT="${SPARKLE_TOOLS_DIR:-$ROOT/.tools/Sparkle-$SPARKLE_VERSION}"
-PRIVATE_KEY_FILE="${1:-$HOME/.config/codexbar-monterey/sparkle-private-key}"
+PRIVATE_KEY_FILE="${1:-$HOME/.config/aiusagebar/sparkle-private-key}"
 
 download_tools() {
   mkdir -p "$ROOT/.tools"

@@ -4,14 +4,20 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ROOT / "Sources" / "CodexBarMonterey"
+SOURCES = ROOT / "Sources" / "AIUsageBar"
 
 menu = (SOURCES / "MenuController.swift").read_text()
 native_menu = (SOURCES / "NativeMenuViews.swift").read_text()
 alerts = (SOURCES / "ProviderAlertController.swift").read_text()
 preferences = (SOURCES / "Preferences.swift").read_text()
-views = (SOURCES / "DashboardViews.swift").read_text()
-settings = (SOURCES / "SettingsWindowController.swift").read_text()
+# Views and settings are split across several files; contracts read them as one.
+views = "\n".join((SOURCES / name).read_text() for name in [
+    "DashboardViews.swift", "ProviderHistoryCharts.swift", "AllProvidersView.swift",
+])
+settings = "\n".join((SOURCES / name).read_text() for name in [
+    "SettingsWindowController.swift", "SettingsStore.swift", "SettingsPanes.swift",
+    "ProviderSettingsView.swift", "TokenHistorySettingsView.swift",
+])
 details = (SOURCES / "DetailsWindowController.swift").read_text()
 detail_popover = (SOURCES / "ProviderDetailPopoverController.swift").read_text()
 client = (SOURCES / "CLIClient.swift").read_text()
@@ -23,7 +29,7 @@ local_spend = (SOURCES / "LocalSpendHistoryStore.swift").read_text()
 token_history = (SOURCES / "LocalTokenHistoryStore.swift").read_text()
 models = (SOURCES / "Models.swift").read_text()
 provider_auth = (SOURCES / "ProviderAuthentication.swift").read_text()
-config_store = (SOURCES / "CodexBarConfigStore.swift").read_text()
+config_store = (SOURCES / "ProviderConfigStore.swift").read_text()
 
 # The primary interaction is a real macOS status menu. The redundant fixed-dark
 # multi-provider popover is gone; only the native provider-detail popover remains.
@@ -57,21 +63,22 @@ assert "adaptiveRefreshInterval" in menu
 assert "ProcessInfo.processInfo.isLowPowerModeEnabled" in menu
 assert "runtimeSmokeReport" in menu
 assert 'failures.append("provider detail popover did not open")' in menu
-assert "CODEXBAR_MONTEREY_UI_SMOKE_OUTPUT" in (SOURCES / "AppDelegate.swift").read_text()
+assert "AIUSAGEBAR_UI_SMOKE_OUTPUT" in (SOURCES / "AppDelegate.swift").read_text()
 
-# Dashboard UI contract: summary cards, history charts, actions, and the native
-# provider detail remain available without the duplicate fixed-dark popover.
+# Dashboard UI contract: history charts, actions, and the native provider
+# detail remain available. The unused fixed-dark popover has been deleted.
 for token in [
-    "DashboardSummaryCard",
-    "MiniHistoryChart",
     "LiveProviderDetailPopoverView",
     "ProviderDetailPopoverView",
     "ProviderHistorySeriesView",
-    "Usage Dashboard",
+    "Web dashboard",
     "Status Page",
-    "keyboardShortcut",
+    'keyboardShortcut("r", modifiers: .command)',
 ]:
     assert token in views, token
+assert "struct DashboardPopoverView" not in views
+assert "NSAppearance(named: .darkAqua)" not in views
+assert "Usage Dashboard" in menu and "Status Page" in menu
 
 # Provider detail is anchored to the status item as a transient popover. The
 # all-provider overview uses the same system-native popover interaction.
@@ -99,7 +106,7 @@ assert "Save & Verify" in settings
 assert "probeProvider" in client
 assert "saveCredential" in client
 assert "ProviderAuthenticationCatalog" in settings
-assert 'status = "Save failed:' in settings
+assert 'status = L("Save failed: %@"' in settings
 assert "Saved, but verification failed" not in settings
 assert 'tokenAccount("deepseek"' in provider_auth
 assert 'tokenAccount("venice"' in provider_auth
@@ -139,7 +146,6 @@ assert "return Array(lanes.prefix(8))" not in parser
 # Status polling is visible and transition-based notifications are opt-in.
 assert "serviceStatus: snapshot.status" in parser
 assert "ProviderServiceHealth" in models
-assert "ServiceStatusBanner" in views
 assert "UNUserNotificationCenter" in alerts
 assert "previousStates" in alerts
 assert "notifyOnServiceIncidents" in alerts
@@ -151,7 +157,7 @@ assert "Notifications" in settings
 assert "last30DaysTokens" in cost_payload
 assert "last30DaysCostUSD" in cost_payload
 assert "resolvedTodayTokens" in cost_payload
-assert 'title: "Today tokens"' in parser
+assert 'title: L("Today tokens")' in parser
 assert "LocalQuotaTrendStore" in store
 assert "LocalTokenHistoryStore" in store
 assert 'snapshot.provider == "zai"' in quota_trend
@@ -178,7 +184,7 @@ assert "usage?.accountEmail" in models
 # quota percentages as token history.
 assert "private static func zaiPayload" in parser
 assert 'dictionary(named: "zaiUsage"' in parser
-assert 'title: "30d tokens"' in parser
+assert 'title: L("30d tokens")' in parser
 assert 'dictionary(named: "localTokenHistory"' in parser
 assert 'zai.modelUsage' in token_history
 assert 'token-history-v1.json' in token_history
@@ -192,28 +198,32 @@ assert 'case all' in token_history
 assert 'case year' in token_history
 assert 'recordsByID[candidate.id]' in token_history
 assert 'suffix(' not in token_history
-assert 'value: "Not exposed"' in parser
+assert 'value: L("Not exposed")' in parser
 assert 'title: "5-hour trend"' not in parser
 assert "Local 5-hour samples" not in views
-assert 'title: "Hourly tokens"' in views
-assert 'title: "5h quota used"' in views
+assert 'title: L("Hourly tokens")' in views
+assert 'title: L("5h quota used")' in views
 assert 'fixedMaximum: 100' in views
-assert 'title: "Daily tokens"' in views
+assert 'title: L("Daily tokens")' in views
 assert '"Daily estimated cost" : "Daily cost"' in views
 assert "Each chart is labeled and scaled independently." in views
 assert "resolvedHistoryValues" not in views
 assert "historyContext: historyContext" in parser
 assert '"30dtokens", "thirtydaytokens", "totaltokens"' not in parser
 assert "supplementalJSONBySnapshot" in store
-assert "fetchedSupplement ??" in store
-assert "providerAccountCount <= 1" in store
+assert "providerAccountCount(snapshot.provider) <= 1" in store
+assert "accountCount > 1" in store
 assert "refreshPending = true" in store
-assert "snapshotGeneration" in store
-assert "generation == snapshotGeneration" in store
+# Enrichment re-resolves the account's current snapshot after the scan,
+# shares in-flight scans, and reuses recent results for menu opens.
 assert "let snapshot = snapshots.first(where: { $0.id == key })" in store
+assert "guard let current = snapshots.first(where: { $0.id == key })" in store
+assert "scansInFlight" in store
+assert "interactiveSupplementMaxAge" in store
+assert "recordLocalHistory(for:" in store
+assert "await enrichDashboard(for: snapshot)" not in store
 assert "store.onRefreshStateChanged" in menu
 assert "self?.rebuildStatusItems()" in menu
-assert "RefreshStatusBanner" in views
 assert '["cost", "--provider", provider' in client
 assert '["--provider", provider, "--format", "json"' not in client
 
@@ -222,14 +232,8 @@ assert '["--provider", provider, "--format", "json"' not in client
 assert "StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)" in views
 assert "StrokeStyle(lineWidth: 3, lineJoin: .round, lineCap: .round)" not in views
 
-# The optional all-provider details window may retain its dark-blue overview,
-# while the duplicate menu popover and its controller stay removed.
-assert "DashboardTheme.backgroundTop" in views
-assert "DashboardTheme.selection.opacity(0.88)" in views
-assert "DashboardTheme.cardStart" in views
-assert "ProviderBrand.color(for: dashboard.id).opacity(0.95)" not in views
-assert ".frame(height: switcherHeight)" in views
-assert ".frame(maxHeight: 174)" not in views
+# The all-provider details popover follows the system appearance.
+assert "DashboardTheme" not in views
 assert "ScrollView(.vertical, showsIndicators: true)" in views
 assert ".accessibilityValue" in views
 
@@ -238,8 +242,24 @@ assert '"version": 1' in config_store
 assert 'Data("{}\\n".utf8)' not in settings
 assert "revealAPIKey = false" in settings
 assert "Open Console logs" in settings
-assert "Library/Logs/CodexBarMonterey" not in settings
+assert "Library/Logs/AIUsageBar" not in settings
 
 
+
+
+# Translation tables trap at launch on duplicate keys, and every L("...")
+# literal must have a Simplified Chinese entry.
+import re as _re
+_entry = _re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$', _re.M)
+_merged = {}
+for _table in sorted(SOURCES.glob("L10n+*.swift")):
+    _keys = [k for k, _ in _entry.findall(_table.read_text())]
+    assert len(_keys) == len(set(_keys)), f"duplicate translation keys in {_table.name}"
+    _merged.update(dict(_entry.findall(_table.read_text())))
+for _source in SOURCES.glob("*.swift"):
+    if _source.name.startswith("L10n"):
+        continue
+    for _key in _re.findall(r'\bL\(\s*"((?:[^"\\]|\\.)*)"', _source.read_text()):
+        assert _key in _merged, f"missing translation in {_source.name}: {_key}"
 
 print("All-provider authentication UI contract tests passed.")

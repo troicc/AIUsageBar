@@ -9,9 +9,11 @@ mkdir -p "$MODULE_CACHE"
 cp "$ROOT/Scripts/provider_auth_config_regression.swift" "$TMP/main.swift"
 swiftc \
   -module-cache-path "$MODULE_CACHE" \
-  "$ROOT/Sources/CodexBarMonterey/ProviderAuthentication.swift" \
-  "$ROOT/Sources/CodexBarMonterey/CodexBarConfigStore.swift" \
-  "$ROOT/Sources/CodexBarMonterey/Models.swift" \
+  "$ROOT/Sources/AIUsageBar/ProviderAuthentication.swift" \
+  "$ROOT/Sources/AIUsageBar/ProviderConfigStore.swift" \
+  "$ROOT/Sources/AIUsageBar/Models.swift" \
+  "$ROOT/Sources/AIUsageBar/JSONHelpers.swift" \
+  "$ROOT"/Sources/AIUsageBar/L10n*.swift \
   "$TMP/main.swift" \
   -o "$TMP/provider-auth-regression"
 

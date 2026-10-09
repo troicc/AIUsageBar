@@ -6,9 +6,9 @@ set -euo pipefail
 : "${CODE_SIGN_IDENTITY:?Set CODE_SIGN_IDENTITY}"
 
 WORK_ROOT="${RUNNER_TEMP:-$(mktemp -d)}"
-KEYCHAIN_PATH="$WORK_ROOT/codexbar-signing.keychain-db"
+KEYCHAIN_PATH="$WORK_ROOT/aiusagebar-signing.keychain-db"
 KEYCHAIN_PASSWORD="${KEYCHAIN_PASSWORD:-$(openssl rand -hex 24)}"
-CERTIFICATE_PATH="$WORK_ROOT/codexbar-developer-id.p12"
+CERTIFICATE_PATH="$WORK_ROOT/aiusagebar-developer-id.p12"
 
 printf '%s' "$DEVELOPER_ID_P12_BASE64" | /usr/bin/base64 -D > "$CERTIFICATE_PATH"
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"

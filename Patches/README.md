@@ -18,7 +18,7 @@ with the macOS 12 SDK.
 Optional ordinary patches may still be added here for changes that cannot be
 expressed safely by the deterministic transformer:
 
-- `CodexBar.patch`
+- `Engine.patch` (applied to the upstream CodexBar engine)
 - `SweetCookieKit.patch`
 - `Commander.patch`
 

@@ -98,9 +98,9 @@ final class DashboardStore: ObservableObject {
             let loaded = try await client.fetchEnabled(status: true)
             claudeActiveMinutes = await activity
             // Only one Claude account can be matched to Claude Code's sign-in.
-            if loaded.filter({ $0.provider == "claude" }).count == 1 {
-                claudeAccountUsage = await claudeAccountClient.usage()
-            } else {
+            // Background refreshes reuse the last official usage and never
+            // request it; see loadClaudeAccountUsageIfNeeded().
+            if loaded.filter({ $0.provider == "claude" }).count != 1 {
                 claudeAccountUsage = nil
             }
             snapshots = loaded.sorted { left, right in
@@ -182,7 +182,24 @@ final class DashboardStore: ObservableObject {
         }
         onRefreshStateChanged?()
     }
+    /// Fetches the official Claude account usage when the user opens a view
+    /// of Claude. The client caches it for 15 minutes, so repeated opens do
+    /// not send more requests.
+    func loadClaudeAccountUsageIfNeeded() {
+        let claude = snapshots.filter { $0.provider == "claude" }
+        guard claude.count == 1, let snapshotID = claude.first?.id else { return }
+        Task { [weak self] in
+            guard let self = self else { return }
+            let usage = await self.claudeAccountClient.usage()
+            guard self.snapshots.filter({ $0.provider == "claude" }).count == 1 else { return }
+            self.claudeAccountUsage = usage
+            self.dashboards[snapshotID]?.claudeProductBreakdown = usage?.breakdown
+            self.dashboards[snapshotID]?.claudeIncludedCredit = usage?.includedCredit
+        }
+    }
+
     func select(_ snapshot: ProviderSnapshot) {
+        if snapshot.provider == "claude" { loadClaudeAccountUsageIfNeeded() }
         selectedProviderID = snapshot.id
         Task { await enrichDashboard(for: snapshot, maxAge: Self.interactiveSupplementMaxAge) }
     }

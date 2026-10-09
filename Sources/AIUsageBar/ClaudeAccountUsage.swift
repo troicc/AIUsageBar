@@ -67,16 +67,15 @@ struct ClaudeAccountUsage: Hashable {
 
 /// Reads the official account usage with the sign-in Claude Code already
 /// stored in the login keychain. Read-only; the token is sent only to
-/// api.anthropic.com. The first read shows the standard keychain prompt;
+/// api.anthropic.com, only while the user is viewing Claude (submenu,
+/// detail or all-providers popover) and at most every 15 minutes.
+/// The first read shows the standard keychain prompt;
 /// if the user denies it, the app stops asking until next launch.
 actor ClaudeAccountUsageClient {
     private static let keychainService = "Claude Code-credentials"
     private static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    private static let userAgent: String = {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        return "AIUsageBar/\(version ?? "dev")"
-    }()
-    private let cacheLifetime: TimeInterval = 5 * 60
+    /// Fetched only when Claude is being looked at, and at most this often.
+    private let cacheLifetime: TimeInterval = 15 * 60
     private var cached: (fetchedAt: Date, usage: ClaudeAccountUsage?)?
     private var accessDenied = false
 
@@ -89,8 +88,7 @@ actor ClaudeAccountUsageClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        // Identify honestly; the endpoint does not require a Claude Code agent.
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("claude-code/2.1.0", forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return cached?.usage }

@@ -12,6 +12,11 @@
 - **实现**：`ClaudeAccountUsageClient`（actor）用 `SecItemCopyMatching` 读取钥匙串里 Claude Code 自己的登录凭据（服务名 `Claude Code-credentials`）。只读，token 只发往 api.anthropic.com；5 分钟缓存；token 过期就跳过；用户拒绝钥匙串访问后，本次运行不再询问。首次访问会弹出系统钥匙串授权；ad-hoc 签名每次重新构建后都会再问一次。只有在恰好启用 1 个 Claude 账号时才附加到 dashboard。
 - **展示**：趋势卡片有官方数据时显示官方的 `ClaudeProductBreakdownView`，曲线不再按来源上色；没有官方数据时才退回本机估算。Claude 子菜单显示紧凑的分布条和附赠额度。
 - **概览**：同心双环被用户评价为“low、不清晰”，改为类似 macOS 电池小组件：每个服务商一个独立实色环（按剩余量变色、中性灰底），环中是品牌图标，下方是细字号百分比、名称和倒计时。`UsageRing` 改为实色加中性底，`ConcentricQuotaRings` 已删除。
+- **用户决定（2026-10-09）**：
+  - User-Agent 保持 `claude-code/2.1.0`，不要更新版本号，也不要改成 AIUsageBar。实测接口接受任意名字，这是用户的偏好，不是技术限制。
+  - 降低频率：后台刷新绝不请求，只在打开 Claude 子菜单、Claude 详情 popover 或“全部服务商”时调用 `DashboardStore.loadClaudeAccountUsageIfNeeded()`，并按 15 分钟缓存。
+  - 该接口是 Anthropic 的未公开内部接口，用户已知情。
+  - 用户的网络经过 Surge（系统代理 127.0.0.1:6152）；URLSession 遵守系统代理。
 - 画廊：`AIUSAGEBAR_GALLERY_CLAUDE_USAGE=<保存的接口 JSON>` 用来注入官方数据。画廊本身不读钥匙串，避免在用户屏幕上弹窗。
 
 ## 2026-10-09 第二轮：更克制的高级感、网页端额度估算、趋势图与设置滚动卡顿

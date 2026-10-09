@@ -326,6 +326,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         else { return }
         resetMenu(menu)
         populateProviderMenu(menu, snapshot: snapshot, includeQuit: false)
+        if snapshot.provider == "claude" { store.loadClaudeAccountUsageIfNeeded() }
     }
 
     func menuDidClose(_ menu: NSMenu) {
@@ -750,6 +751,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     @objc private func openAllDetailsMenuItem() {
         guard let button = lastStatusButton ?? mergedItem?.button ?? providerItems.values.first?.button else { return }
         detailPopover.close()
+        store.loadClaudeAccountUsageIfNeeded()
         DispatchQueue.main.async { [weak self, weak button] in
             guard let self = self, let button = button else { return }
             self.details.show(relativeTo: button)

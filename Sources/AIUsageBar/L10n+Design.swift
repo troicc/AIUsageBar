@@ -23,6 +23,8 @@ extension L10nTable {
         "%@ of %@ left": "剩余 %@ / 共 %@",
         "expires %@": "%@ 到期",
         "Shared by Claude Code, Cowork, chats and other apps. The weekly breakdown comes from your Claude account.": "Claude Code、Cowork、聊天和其他应用共用此额度。本周按产品占比来自你的 Claude 账号（官方数据）。",
+        "Preview reset animation": "预览重置动画",
+        "Plays the quota-reset animation in the menu bar now, and in the menu the next time it opens.": "立即在菜单栏播放额度重置动画；下次打开菜单时也会播放一次。",
         "Latest": "最新",
         "Quota ring": "额度环",
         "No quota": "无额度",

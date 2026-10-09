@@ -93,6 +93,8 @@ struct NativeMenuOverviewView: View {
     let quotaPresentation: MenuQuotaPresentation
     let showAccount: Bool
     let showStatus: Bool
+    /// Rows whose quota just reset; their gauges play the fill-and-glow.
+    var celebrating: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -143,15 +145,17 @@ struct NativeMenuOverviewView: View {
     private func gaugeTile(_ row: NativeMenuOverviewRow) -> some View {
         VStack(spacing: 6) {
             ZStack {
-                Circle()
-                    .stroke(Color.primary.opacity(0.1), lineWidth: 5)
-                if let remaining = row.remainingPercent, !row.hasError {
-                    let shown = quotaPresentation == .used ? 100 - remaining : remaining
-                    Circle()
-                        .trim(from: 0, to: max(0.004, CGFloat(shown / 100)))
-                        .stroke(DS.tone(remaining: remaining), style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
+                let remaining = row.hasError ? nil : row.remainingPercent
+                let shown = remaining.map { quotaPresentation == .used ? 100 - $0 : $0 } ?? 0
+                AnimatedQuotaRing(percent: shown, color: DS.toneNSColor(remaining: remaining),
+                                  lineWidth: 5, diameter: 50,
+                                  celebrate: remaining != nil && celebrating.contains(row.id))
+                    .frame(width: 50 + QuotaRingLayerView.glowMargin * 2,
+                           height: 50 + QuotaRingLayerView.glowMargin * 2)
+                    .padding(-QuotaRingLayerView.glowMargin)
+                    // A new identity recreates the ring, which replays the
+                    // animation when a reset arrives with the menu open.
+                    .id("\(row.id)-\(celebrating.contains(row.id))")
                 if row.hasError {
                     Image(systemName: "exclamationmark")
                         .font(.system(size: 17, weight: .medium))

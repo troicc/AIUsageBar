@@ -661,12 +661,22 @@ struct SettingsMenuBarPreview: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(L("Menu bar preview")))
 
-            Text(snapshots.contains(where: { $0.headlineUsedPercent != nil })
-                ? L("Preview uses your latest provider values.")
-                : L("Preview uses sample values."))
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 2)
+            HStack {
+                Text(snapshots.contains(where: { $0.headlineUsedPercent != nil })
+                    ? L("Preview uses your latest provider values.")
+                    : L("Preview uses sample values."))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(action: {
+                    NotificationCenter.default.post(name: .previewResetAnimation, object: nil)
+                }) {
+                    Label(L("Preview reset animation"), systemImage: "sparkles")
+                }
+                .controlSize(.small)
+                .help(L("Plays the quota-reset animation in the menu bar now, and in the menu the next time it opens."))
+            }
+            .padding(.horizontal, 2)
         }
     }
 

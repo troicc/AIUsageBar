@@ -2,6 +2,15 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-09 额度重置动画
+
+- **判定**：`ProviderSnapshot.quotaDidReset(from:to:)` 按 `windowMinutes` 对齐窗口。`resetsAt` 前移超过 10 分钟且用量下降至少 5 点算重置；没有 `resetsAt` 时用量下降至少 25 点也算。有回归测试（在 `quota_trend_store_regression.swift`）。
+- **流程**：`DashboardStore` 在 `performRefresh` 中对比前后快照，回调 `onQuotaReset`，并把待播的重置记入 `pendingResetCelebrations`，`takeResetCelebrations()` 取出后清空，保证每次重置只播一次。
+- **菜单**：概览的环改为 `AnimatedQuotaRing`（NSViewRepresentable + CAShapeLayer）。原因是菜单 tracking 期间 SwiftUI 动画可能不刷新，而 Core Animation 由渲染服务器执行。动画顺序：strokeEnd 从 0 填满（1.1 s），然后 shadow 发光、线宽加粗、整圈光晕淡入淡出（1.3 s）。`.id(row.id-celebrating)` 让菜单开着时到来的重置也能重播。四周留了 `glowMargin` 并用负 padding，避免光晕被裁掉。
+- **菜单栏**：`animateStatusRing` 用 60fps 的 Timer（加入 common modes）逐帧生成 `ringImage(..., celebration:)`。动画期间用状态色的非模板图，结束后 `renderStatusItems()` 恢复模板图；providerIcon 样式不播放。
+- **预览**：设置 → 菜单栏页有“预览重置动画”按钮，发送 `.previewResetAnimation` 通知。
+- 子菜单的大环和详情 popover 的环暂不播放动画。
+
 ## 2026-10-09 官方服务商 Logo
 
 - 用户要求把各服务商图标换成官方 Logo。素材来自上游 CodexBar 的 `Sources/CodexBar/Resources/ProviderIcon-*.svg`（61 个）。macOS 12 的 NSImage 不能读 SVG，所以用 `Scripts/convert_provider_icons.swift`（WebKit `createPDF`）转成矢量 PDF，提交在 `Resources/ProviderIcons/<id>.pdf`（约 436KB）。上游更新 Logo 时重新运行这个脚本即可。

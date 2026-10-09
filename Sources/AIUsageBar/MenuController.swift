@@ -29,6 +29,9 @@ final class MenuController: NSObject, NSMenuDelegate {
     /// Provider submenus under "Providers" are filled only when opened.
     private var lazyProviderMenus: [ObjectIdentifier: String] = [:]
     private var storeObservation: AnyCancellable?
+    /// Providers whose gauges play the reset animation in the open menu.
+    private var activeCelebrations: Set<String> = []
+    private var statusAnimationTimers: [ObjectIdentifier: Timer] = [:]
     private weak var lastStatusButton: NSStatusBarButton?
     private var lastMenuProviderID: String?
 
@@ -71,6 +74,9 @@ final class MenuController: NSObject, NSMenuDelegate {
             self?.rebuildStatusItems()
             self?.renderStatusItems()
         }
+        store.onQuotaReset = { [weak self] ids in
+            self?.quotaDidReset(ids)
+        }
         store.onRefreshCompleted = { [weak self] snapshots in
             guard let self = self else { return }
             self.alertController.evaluate(snapshots: snapshots, dashboards: self.store.dashboards)
@@ -80,6 +86,11 @@ final class MenuController: NSObject, NSMenuDelegate {
             self,
             selector: #selector(preferencesChanged),
             name: .preferencesChanged,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(previewResetAnimation),
+            name: .previewResetAnimation,
             object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(currencyDisplayChanged),
             name: .currencyDisplayChanged, object: nil)
@@ -331,9 +342,11 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     func menuDidClose(_ menu: NSMenu) {
         openMenus.remove(ObjectIdentifier(menu))
+        if openMenus.isEmpty { activeCelebrations.removeAll() }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        if openMenus.isEmpty { activeCelebrations = store.takeResetCelebrations() }
         openMenus.insert(ObjectIdentifier(menu))
         // Provider submenus are filled in menuNeedsUpdate; they are not roots.
         if lazyProviderMenus[ObjectIdentifier(menu)] != nil { return }
@@ -391,6 +404,70 @@ final class MenuController: NSObject, NSMenuDelegate {
         liveUpdaters[ObjectIdentifier(menu), default: []].append(update)
     }
 
+    // MARK: Quota reset animation
+
+    private func quotaDidReset(_ ids: Set<String>) {
+        playStatusResetAnimations(for: ids)
+        if !openMenus.isEmpty {
+            // Already looking at the menu: replay in place.
+            activeCelebrations.formUnion(store.takeResetCelebrations())
+            scheduleLiveUpdate()
+        }
+    }
+
+    @objc private func previewResetAnimation() {
+        let ids = store.previewResetCelebration()
+        quotaDidReset(ids)
+    }
+
+    /// Fills the status-item ring from empty, then glows it, for the items
+    /// showing the providers that reset.
+    private func playStatusResetAnimations(for ids: Set<String>) {
+        guard Preferences.shared.menuBarDisplayStyle != .providerIcon else { return }
+        let size: CGFloat = Preferences.shared.menuBarDisplayStyle == .meter ? 16 : 13
+        if let merged = mergedItem?.button {
+            let remaining = store.snapshots.compactMap(\.headlineUsedPercent).max().map { max(0, 100 - $0) }
+            if let remaining = remaining { animateStatusRing(merged, remaining: remaining, size: size) }
+        }
+        for id in ids {
+            guard let button = providerItems[id]?.button,
+                  let used = store.snapshots.first(where: { $0.id == id })?.headlineUsedPercent
+            else { continue }
+            animateStatusRing(button, remaining: max(0, 100 - used), size: size)
+        }
+    }
+
+    private func animateStatusRing(_ button: NSStatusBarButton, remaining: Double, size: CGFloat) {
+        let key = ObjectIdentifier(button)
+        statusAnimationTimers[key]?.invalidate()
+        let start = CACurrentMediaTime()
+        let fill: Double = 1.1, glow: Double = 1.3
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self, weak button] timer in
+            Task { @MainActor in
+                guard let self = self, let button = button else { timer.invalidate(); return }
+                let elapsed = CACurrentMediaTime() - start
+                if elapsed < fill {
+                    let t = elapsed / fill
+                    let eased = 1 - pow(1 - t, 3)
+                    button.image = Self.ringImage(remaining: remaining * eased, failed: false, size: size,
+                                                  celebration: 0, toneRemaining: remaining)
+                } else if elapsed < fill + glow {
+                    let t = (elapsed - fill) / glow
+                    let intensity = t < 0.3 ? t / 0.3 : max(0, 1 - (t - 0.3) / 0.7)
+                    button.image = Self.ringImage(remaining: remaining, failed: false, size: size,
+                                                  celebration: intensity, toneRemaining: remaining)
+                } else {
+                    timer.invalidate()
+                    self.statusAnimationTimers[key] = nil
+                    self.renderStatusItems()
+                }
+            }
+        }
+        // Common modes keep it running while a menu is being tracked.
+        RunLoop.main.add(timer, forMode: .common)
+        statusAnimationTimers[key] = timer
+    }
+
     private func populate(menu: NSMenu, providerID: String?) {
         resetMenu(menu)
         lazyProviderMenus.removeAll()
@@ -423,7 +500,8 @@ final class MenuController: NSObject, NSMenuDelegate {
                 totalCount: self.store.snapshots.count,
                 quotaPresentation: Preferences.shared.menuQuotaPresentation,
                 showAccount: Preferences.shared.showAccountInMenu,
-                showStatus: Preferences.shared.showServiceStatus)
+                showStatus: Preferences.shared.showServiceStatus,
+                celebrating: self.activeCelebrations)
         })
         menu.addItem(.separator())
 
@@ -867,9 +945,17 @@ final class MenuController: NSObject, NSMenuDelegate {
     /// Status-item gauge: a ring whose arc is the quota left. It is a
     /// template image like other menu extras, except when almost nothing is
     /// left, where it turns red the way the battery icon does.
-    static func ringImage(remaining: Double?, failed: Bool, size: CGFloat = 16) -> NSImage {
+    /// `celebration` > 0 draws the reset animation frame: the arc in its
+    /// status color with a glow of that strength; `toneRemaining` picks the
+    /// color (the final value while the arc is still filling).
+    static func ringImage(remaining: Double?, failed: Bool, size: CGFloat = 16,
+                          celebration: CGFloat? = nil, toneRemaining: Double? = nil) -> NSImage {
         let fraction = CGFloat(max(0, min(100, remaining ?? 0)) / 100)
         let critical = !failed && remaining.map { $0 < 15 } == true
+        if let celebration = celebration {
+            return celebrationRingImage(fraction: fraction, size: size, glow: celebration,
+                                        color: DS.toneNSColor(remaining: toneRemaining ?? remaining))
+        }
         let image = NSImage(size: NSSize(width: size + 2, height: size), flipped: false) { rect in
             let lineWidth: CGFloat = size >= 16 ? 2.4 : 2.1
             let inset = lineWidth / 2 + 0.5
@@ -905,6 +991,49 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = !critical
         image.accessibilityDescription = remaining.map { L("%@%% remaining", String(format: "%.0f", $0)) }
+        return image
+    }
+
+    private static func celebrationRingImage(fraction: CGFloat, size: CGFloat, glow: CGFloat, color: NSColor) -> NSImage {
+        let margin: CGFloat = 3
+        let image = NSImage(size: NSSize(width: size + margin * 2, height: size + 2), flipped: false) { rect in
+            let lineWidth: CGFloat = (size >= 16 ? 2.4 : 2.1) * (1 + 0.35 * glow)
+            let inset = lineWidth / 2 + 0.5
+            let circleRect = NSRect(x: margin + inset, y: 1 + inset,
+                                    width: size - inset * 2, height: size - inset * 2)
+            let center = NSPoint(x: circleRect.midX, y: circleRect.midY)
+
+            let track = NSBezierPath(ovalIn: circleRect)
+            track.lineWidth = lineWidth
+            NSColor.labelColor.withAlphaComponent(0.25).setStroke()
+            track.stroke()
+            if glow > 0 {
+                // The whole ring lights up in the status color.
+                let aura = NSBezierPath(ovalIn: circleRect)
+                aura.lineWidth = lineWidth * 1.8
+                color.withAlphaComponent(0.35 * glow).setStroke()
+                aura.stroke()
+            }
+            guard fraction > 0 else { return true }
+            NSGraphicsContext.saveGraphicsState()
+            if glow > 0 {
+                let shadow = NSShadow()
+                shadow.shadowColor = color.withAlphaComponent(glow)
+                shadow.shadowBlurRadius = 3.5 * glow
+                shadow.shadowOffset = .zero
+                shadow.set()
+            }
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: center, radius: circleRect.width / 2, startAngle: 90,
+                          endAngle: 90 - 360 * fraction, clockwise: true)
+            arc.lineWidth = lineWidth
+            arc.lineCapStyle = .round
+            color.setStroke()
+            arc.stroke()
+            NSGraphicsContext.restoreGraphicsState()
+            return true
+        }
+        image.isTemplate = false
         return image
     }
 }

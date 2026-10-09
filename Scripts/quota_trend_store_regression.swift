@@ -126,3 +126,26 @@ for step in 0...10 {
 let frequentCount = sampledValues(latest).count
 require(frequentCount >= 4, "two-minute refreshes collapsed the trend to \(frequentCount) point(s)")
 print("Quota trend store frequent-refresh regression passed.")
+
+// Reset detection: a window that moves to a new reset time with lower usage
+// counts as a reset; drift or rising usage does not.
+func zaiSnapshot(_ used: Double, reset: Date?) -> ProviderSnapshot {
+    ProviderSnapshot(provider: "zai", version: nil, source: "api", status: nil,
+        usage: UsageSnapshot(primary: RateWindow(usedPercent: used, windowMinutes: 300, resetsAt: reset),
+            secondary: nil, tertiary: nil, updatedAt: start, identity: nil,
+            accountEmail: "first@example.com", accountOrganization: nil, loginMethod: nil),
+        credits: nil, account: nil, plan: nil, error: nil, rawJSON: nil)
+}
+let windowEnd = start.addingTimeInterval(3600)
+require(ProviderSnapshot.quotaDidReset(from: zaiSnapshot(92, reset: windowEnd),
+                                       to: zaiSnapshot(3, reset: windowEnd.addingTimeInterval(5 * 3600))),
+        "a new window with lower usage was not detected as a reset")
+require(!ProviderSnapshot.quotaDidReset(from: zaiSnapshot(40, reset: windowEnd),
+                                        to: zaiSnapshot(45, reset: windowEnd.addingTimeInterval(30))),
+        "reset-time drift with rising usage was treated as a reset")
+require(!ProviderSnapshot.quotaDidReset(from: zaiSnapshot(40, reset: windowEnd),
+                                        to: zaiSnapshot(38, reset: windowEnd)),
+        "a small correction inside the same window was treated as a reset")
+require(ProviderSnapshot.quotaDidReset(from: zaiSnapshot(80, reset: nil), to: zaiSnapshot(10, reset: nil)),
+        "a sharp drop without reset times was not detected")
+print("Quota reset detection regression passed.")

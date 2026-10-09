@@ -19,6 +19,10 @@ final class DashboardStore: ObservableObject {
     var onQuit: (() -> Void)?
     var onRefreshStateChanged: (() -> Void)?
     var onRefreshCompleted: (([ProviderSnapshot]) -> Void)?
+    /// Snapshot IDs whose quota window just started over.
+    var onQuotaReset: ((Set<String>) -> Void)?
+    /// Resets not yet shown in a menu; each plays its animation once.
+    private var pendingResetCelebrations: Set<String> = []
 
     /// Accounts with a `cost` scan running, so overlapping triggers share one.
     private var scansInFlight: Set<String> = []
@@ -103,6 +107,13 @@ final class DashboardStore: ObservableObject {
             if loaded.filter({ $0.provider == "claude" }).count != 1 {
                 claudeAccountUsage = nil
             }
+            let previousByID = Dictionary(snapshots.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let resetIDs = Set(loaded.compactMap { next -> String? in
+                guard let previous = previousByID[next.id],
+                      ProviderSnapshot.quotaDidReset(from: previous, to: next)
+                else { return nil }
+                return next.id
+            })
             snapshots = loaded.sorted { left, right in
                 let providerOrder = left.displayName.localizedCaseInsensitiveCompare(right.displayName)
                 if providerOrder != .orderedSame { return providerOrder == .orderedAscending }
@@ -153,6 +164,10 @@ final class DashboardStore: ObservableObject {
             lastError = nil
             lastSuccessfulRefresh = Date()
             onRefreshCompleted?(snapshots)
+            if !resetIDs.isEmpty {
+                pendingResetCelebrations.formUnion(resetIDs)
+                onQuotaReset?(resetIDs)
+            }
 
             // Codex and Claude expose dated token components through the local
             // cost scanner rather than the enabled-provider payload. Enrich
@@ -196,6 +211,20 @@ final class DashboardStore: ObservableObject {
             self.dashboards[snapshotID]?.claudeProductBreakdown = usage?.breakdown
             self.dashboards[snapshotID]?.claudeIncludedCredit = usage?.includedCredit
         }
+    }
+
+    /// Pending reset animations for the next menu that shows these
+    /// providers; consumed so each reset plays once.
+    func takeResetCelebrations() -> Set<String> {
+        defer { pendingResetCelebrations.removeAll() }
+        return pendingResetCelebrations
+    }
+
+    /// Queues the reset animation for every provider with a quota gauge.
+    func previewResetCelebration() -> Set<String> {
+        let ids = Set(snapshots.filter { $0.headlineUsedPercent != nil }.map(\.id))
+        pendingResetCelebrations.formUnion(ids)
+        return ids
     }
 
     func select(_ snapshot: ProviderSnapshot) {

@@ -2,6 +2,14 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-09 官方服务商 Logo
+
+- 用户要求把各服务商图标换成官方 Logo。素材来自上游 CodexBar 的 `Sources/CodexBar/Resources/ProviderIcon-*.svg`（61 个）。macOS 12 的 NSImage 不能读 SVG，所以用 `Scripts/convert_provider_icons.swift`（WebKit `createPDF`）转成矢量 PDF，提交在 `Resources/ProviderIcons/<id>.pdf`（约 436KB）。上游更新 Logo 时重新运行这个脚本即可。
+- `build_app.sh` 和 `build_local_validation.sh` 会把它们 `ditto` 到 `Contents/Resources/ProviderIcons`；smoke test 检查 `claude.pdf` 是否存在；release contract 也断言了这一点。
+- `ProviderLogo`：别名 openai/azureopenai→codex、moonshot→kimi、alibabatokenplan→alibaba。单色 Logo 作为模板蒙版使用，codebuff、doubao、sub2api、zoommate 保留原色；找不到 Logo 时回退到 SF Symbol。源码环境（画廊、视觉测试）通过 `AIUSAGEBAR_PROVIDER_ICONS=<repo>/Resources/ProviderIcons` 加载。
+- `ProviderBadge` 改为“品牌官方色底 + 白色官方 Logo”（`ProviderBrand.tileColor`：Claude #D97757、DeepSeek #4D6BFE，黑白品牌用近黑色）。菜单概览环中心使用 `ProviderLogoView` + `logoTint`；菜单栏 providerIcon 样式和 Providers 子菜单项使用 `ProviderLogo.templateImage`。DeepSeek 的品牌色从生成的橙褐色改为官方蓝。
+- `THIRD_PARTY.md` 已注明这些 Logo 是各自所有者的商标，仅用于标识服务商。
+
 ## 2026-10-09 第三轮：官方按产品用量、电池小组件式概览
 
 - 用户指出本机估算（Claude Code 83% / 其他 17%）和 claude.ai 设置页差很多。官方是 Cowork 74%、Claude Code 24%、Chats 2%。Cowork 不写本机 Claude Code 日志，所以估算必然偏差。

@@ -15,3 +15,7 @@ The build downloads pinned upstream releases and must preserve their licenses.
 Before public distribution, review the license files in `Vendor/CodexBar`,
 `Vendor/SweetCookieKit`, `Vendor/Commander`, and SwiftPM's checked-out Sparkle package and include
 all notices required by those licenses in the release bundle or repository.
+
+## Provider logos
+
+`Resources/ProviderIcons/*.pdf` are converted (`Scripts/convert_provider_icons.swift`) from the provider icon SVGs in upstream CodexBar (`Sources/CodexBar/Resources/ProviderIcon-*.svg`, MIT). The logos are trademarks of their respective owners and are used only to identify each provider.

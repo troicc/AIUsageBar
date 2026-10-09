@@ -117,28 +117,35 @@ struct DSChip: View {
 
 // MARK: - Identity
 
-/// App-icon style provider badge: a continuous rounded square filled with
-/// the brand color gradient and a white symbol, like System Settings icons.
+/// App-icon style provider badge: the official logo in white on the
+/// brand's own color, like each provider's app icon. Multi-color marks sit
+/// on a white tile; providers without artwork use an SF Symbol.
 struct ProviderBadge: View {
     let providerID: String?
     var size: CGFloat = 28
 
     private var color: Color {
-        providerID.map(ProviderBrand.color(for:)) ?? Color(nsColor: .systemBlue)
+        guard let providerID = providerID else { return Color(nsColor: .systemBlue) }
+        if ProviderLogo.image(for: providerID) == nil { return ProviderBrand.color(for: providerID) }
+        return ProviderLogo.isFullColor(providerID) ? .white : ProviderBrand.tileColor(for: providerID)
     }
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
                 .fill(LinearGradient(
-                    colors: [color.opacity(0.85), color],
+                    colors: [color.opacity(0.88), color],
                     startPoint: .top,
                     endPoint: .bottom))
             RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
-            Image(systemName: providerID.map(ProviderBrand.symbol(for:)) ?? "chart.bar.xaxis")
-                .font(.system(size: size * 0.5, weight: .semibold))
-                .foregroundColor(.white)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+            if let providerID = providerID, ProviderLogo.image(for: providerID) != nil {
+                ProviderLogoView(providerID: providerID, size: size * 0.6, tint: .white)
+            } else {
+                Image(systemName: providerID.map(ProviderBrand.symbol(for:)) ?? "chart.bar.xaxis")
+                    .font(.system(size: size * 0.5, weight: .semibold))
+                    .foregroundColor(.white)
+            }
         }
         .frame(width: size, height: size)
         // No shadows: dozens of badges scroll in Settings and each shadow

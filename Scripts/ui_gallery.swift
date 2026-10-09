@@ -16,6 +16,9 @@ enum UIGallery {
         }
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
+        if ProcessInfo.processInfo.environment["AIUSAGEBAR_PROVIDER_ICONS"] == nil {
+            print("note: set AIUSAGEBAR_PROVIDER_ICONS=<repo>/Resources/ProviderIcons to render official logos")
+        }
 
         let appURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["AIUSAGEBAR_GALLERY_APP"]
             ?? "/Applications/AIUsageBar.app")

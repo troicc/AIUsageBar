@@ -8,6 +8,7 @@ MAIN="$APP/Contents/MacOS/AIUsageBar"
 HELPER="$APP/Contents/Helpers/AIUsageEngine"
 [[ -x "$MAIN" ]] || { echo "Main executable missing: $MAIN" >&2; exit 1; }
 [[ -x "$HELPER" ]] || { echo "CLI helper missing: $HELPER" >&2; exit 1; }
+[[ -f "$APP/Contents/Resources/ProviderIcons/claude.pdf" ]] || { echo "Provider logos missing from bundle" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 

@@ -94,4 +94,9 @@ assert app_delegate.index("LegacyMigration.run()") < app_delegate.index("MenuCon
 assert 'LEGACY_HELPER="CodexBarCLI"' in local_validation
 assert 'set_plist_string CFBundleIdentifier "$BUNDLE_ID"' in local_validation
 
+# Official provider logos ship inside the bundle from Resources/ProviderIcons.
+assert 'ditto "$ROOT/Resources/ProviderIcons" "$APP/Contents/Resources/ProviderIcons"' in build_app
+assert 'ditto "$ROOT/Resources/ProviderIcons" "$OUTPUT_APP/Contents/Resources/ProviderIcons"' in local_validation
+assert len(list((ROOT / "Resources" / "ProviderIcons").glob("*.pdf"))) >= 60
+
 print("Release contract tests passed.")

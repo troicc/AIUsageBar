@@ -274,9 +274,9 @@ final class MenuController: NSObject, NSMenuDelegate {
         case .providerIcon:
             button.title = hasAlert ? "!" : ""
             if snapshots.count == 1, let snapshot = snapshots.first {
-                button.image = NSImage(
-                    systemSymbolName: ProviderBrand.symbol(for: snapshot.provider),
-                    accessibilityDescription: snapshot.displayName)
+                button.image = ProviderLogo.templateImage(for: snapshot.provider, size: 16)
+                    ?? NSImage(systemSymbolName: ProviderBrand.symbol(for: snapshot.provider),
+                               accessibilityDescription: snapshot.displayName)
                 button.image?.isTemplate = true
             } else {
                 button.image = Self.ringImage(remaining: remaining, failed: failed)
@@ -443,9 +443,9 @@ final class MenuController: NSObject, NSMenuDelegate {
                     title: providerMenuTitle(snapshot),
                     action: nil,
                     keyEquivalent: "")
-                item.image = NSImage(
-                    systemSymbolName: ProviderBrand.symbol(for: snapshot.provider),
-                    accessibilityDescription: snapshot.displayName)
+                item.image = ProviderLogo.templateImage(for: snapshot.provider, size: 16)
+                    ?? NSImage(systemSymbolName: ProviderBrand.symbol(for: snapshot.provider),
+                               accessibilityDescription: snapshot.displayName)
                 item.image?.isTemplate = true
                 // Filled on demand in menuNeedsUpdate: building every provider
                 // card up front made each menu open slow with many accounts.

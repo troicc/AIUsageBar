@@ -80,6 +80,9 @@ mkdir -p "$OUTPUT_DIR"
 ditto "$TEMPLATE_APP" "$OUTPUT_APP"
 rm -f "$OUTPUT_APP/Contents/MacOS/$LEGACY_EXECUTABLE"
 install -m 755 "$BUILD_ROOT/AIUsageBar" "$OUTPUT_APP/Contents/MacOS/AIUsageBar"
+# Provider logos come from this checkout, not the template.
+rm -rf "$OUTPUT_APP/Contents/Resources/ProviderIcons"
+ditto "$ROOT/Resources/ProviderIcons" "$OUTPUT_APP/Contents/Resources/ProviderIcons"
 if [[ "$TEMPLATE_HELPER" != "AIUsageEngine" ]]; then
   mv "$OUTPUT_APP/Contents/Helpers/$TEMPLATE_HELPER" "$OUTPUT_APP/Contents/Helpers/AIUsageEngine"
 fi

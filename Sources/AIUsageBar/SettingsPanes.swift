@@ -737,8 +737,7 @@ struct SettingsMenuBarPreview: View {
                 if item.provider.isEmpty {
                     SettingsMeterGlyph(used: item.used)
                 } else {
-                    Image(systemName: ProviderBrand.symbol(for: item.provider))
-                        .font(.system(size: 12, weight: .medium))
+                    ProviderLogoView(providerID: item.provider, size: 13, tint: .primary)
                 }
             }
         }

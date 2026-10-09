@@ -152,9 +152,14 @@ struct NativeMenuOverviewView: View {
                         .stroke(DS.tone(remaining: remaining), style: StrokeStyle(lineWidth: 5, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
-                Image(systemName: row.hasError ? "exclamationmark" : ProviderBrand.symbol(for: row.providerID))
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(row.hasError ? Color(nsColor: .systemRed) : ProviderBrand.color(for: row.providerID))
+                if row.hasError {
+                    Image(systemName: "exclamationmark")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundColor(Color(nsColor: .systemRed))
+                } else {
+                    ProviderLogoView(providerID: row.providerID, size: 20,
+                                     tint: ProviderBrand.logoTint(for: row.providerID))
+                }
             }
             .frame(width: 50, height: 50)
 

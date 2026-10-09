@@ -246,7 +246,8 @@ enum ProviderBrand {
         let fixed: [String: NSColor] = [
             "codex": NSColor(calibratedRed: 0.84, green: 0.32, blue: 0.93, alpha: 1),
             "openai": NSColor(calibratedRed: 0.35, green: 0.48, blue: 0.98, alpha: 1),
-            "claude": NSColor(calibratedRed: 0.91, green: 0.50, blue: 0.29, alpha: 1),
+            "claude": NSColor(calibratedRed: 0.851, green: 0.467, blue: 0.341, alpha: 1),
+            "deepseek": NSColor(calibratedRed: 0.302, green: 0.420, blue: 0.996, alpha: 1),
             "cursor": NSColor(calibratedWhite: 0.88, alpha: 1),
             "gemini": NSColor(calibratedRed: 0.32, green: 0.64, blue: 0.98, alpha: 1),
             "factory": NSColor(calibratedRed: 0.58, green: 0.49, blue: 0.95, alpha: 1),

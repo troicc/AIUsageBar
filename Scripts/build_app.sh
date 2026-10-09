@@ -29,6 +29,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Frameworks
 cp "$APPBIN" "$APP/Contents/MacOS/AIUsageBar"
 # Upstream builds the engine as CodexBarCLI; it ships under the app's own name.
 cp "$ENGINE" "$APP/Contents/Helpers/AIUsageEngine"
+# Official provider logos (vector PDFs; macOS 12 cannot read SVG).
+ditto "$ROOT/Resources/ProviderIcons" "$APP/Contents/Resources/ProviderIcons"
 
 SPARKLE_SEARCH_ROOT="$ROOT/.build"
 SPARKLE="$(find "$SPARKLE_SEARCH_ROOT" -path '*/Sparkle.framework' -type d | head -1 || true)"

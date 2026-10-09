@@ -80,30 +80,38 @@ struct ProviderHistorySeriesView: View {
     let series: ProviderHistorySeries
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
                 Text(series.title)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Text(L("Latest %@", series.latestText))
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
-            Group {
-                switch series.style {
-                case .bars:
-                    ProviderHistoryBarChart(
-                        values: series.values,
-                        color: series.color,
-                        fixedMaximum: series.fixedMaximum)
-                case .line:
-                    LineHistoryChart(
-                        values: series.values,
-                        color: series.color,
-                        fixedMaximum: series.fixedMaximum)
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(series.latestText)
+                        .font(DS.numeral(15, weight: .bold))
+                        .foregroundColor(series.color)
+                    Text(L("Latest"))
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
                 }
             }
-            .frame(height: 74)
+            ZStack {
+                ChartGridLines()
+                Group {
+                    switch series.style {
+                    case .bars:
+                        ProviderHistoryBarChart(
+                            values: series.values,
+                            color: series.color,
+                            fixedMaximum: series.fixedMaximum)
+                    case .line:
+                        LineHistoryChart(
+                            values: series.values,
+                            color: series.color,
+                            fixedMaximum: series.fixedMaximum)
+                    }
+                }
+            }
+            .frame(height: 86)
             .overlay {
                 HStack(spacing: 0) {
                     ForEach(Array(series.values.enumerated()), id: \.offset) { index, _ in
@@ -117,24 +125,39 @@ struct ProviderHistorySeriesView: View {
                 Spacer()
                 Text(series.lastLabel)
             }
-            .font(.system(size: 9))
+            .font(.system(size: 10))
             .foregroundColor(.secondary)
             if series.hasPartialEstimates {
-                Text(L("Partial estimates · known costs only"))
-                    .font(.system(size: 9))
+                Label(L("Partial estimates · known costs only"), systemImage: "info.circle")
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
         }
-        .padding(10)
+        .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color(nsColor: NSColor.controlBackgroundColor)))
+            RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.045)))
         .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .stroke(Color.primary.opacity(0.07), lineWidth: 1))
+            RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(series.title))
         .accessibilityValue(Text(series.accessibilitySummary))
+    }
+}
+
+/// Three faint dashed guides behind a chart.
+struct ChartGridLines: View {
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<3) { index in
+                if index > 0 { Spacer(minLength: 0) }
+                Rectangle()
+                    .fill(Color.primary.opacity(index == 2 ? 0.12 : 0.06))
+                    .frame(height: 0.5)
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -146,12 +169,17 @@ struct ProviderHistoryBarChart: View {
     var body: some View {
         GeometryReader { geometry in
             let maximum = max(fixedMaximum ?? values.compactMap { $0 }.max() ?? 1, 1)
-            HStack(alignment: .bottom, spacing: max(2, geometry.size.width / CGFloat(max(values.count, 1)) * 0.22)) {
-                ForEach(Array(values.enumerated()), id: \.offset) { _, value in
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(color.opacity(value == nil ? 0 : 0.82))
+            let lastIndex = values.lastIndex { $0 != nil }
+            HStack(alignment: .bottom, spacing: max(2, geometry.size.width / CGFloat(max(values.count, 1)) * 0.24)) {
+                ForEach(Array(values.enumerated()), id: \.offset) { index, value in
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(LinearGradient(
+                            colors: [color.opacity(index == lastIndex ? 0.75 : 0.45),
+                                     color.opacity(index == lastIndex ? 1 : 0.7)],
+                            startPoint: .bottom, endPoint: .top))
+                        .opacity(value == nil ? 0 : 1)
                         .frame(maxWidth: .infinity)
-                        .frame(height: (value ?? 0) > 0 ? max(2, geometry.size.height * CGFloat(value! / maximum)) : 0)
+                        .frame(height: (value ?? 0) > 0 ? max(3, geometry.size.height * CGFloat(value! / maximum)) : 0)
                 }
             }
         }
@@ -283,23 +311,46 @@ struct LineHistoryChart: View {
     var body: some View {
         GeometryReader { geometry in
             let maximum = max(fixedMaximum ?? values.compactMap { $0 }.max() ?? 1, 1)
+            let point: (Int, Double) -> CGPoint = { index, value in
+                CGPoint(
+                    x: values.count == 1 ? geometry.size.width / 2 : geometry.size.width * CGFloat(index) / CGFloat(values.count - 1),
+                    y: geometry.size.height * (1 - CGFloat(max(0, value) / maximum)))
+            }
+            // Contiguous runs of known values; gaps stay gaps.
+            let runs: [[CGPoint]] = values.enumerated().reduce(into: [[CGPoint]]()) { runs, entry in
+                guard let value = entry.element else { runs.append([]); return }
+                if runs.isEmpty { runs.append([]) }
+                runs[runs.count - 1].append(point(entry.offset, value))
+            }.filter { !$0.isEmpty }
+            let lastIndex = values.lastIndex { $0 != nil }
             ZStack {
+                ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
+                    if run.count > 1 {
+                        Path { path in
+                            path.move(to: CGPoint(x: run[0].x, y: geometry.size.height))
+                            run.forEach { path.addLine(to: $0) }
+                            path.addLine(to: CGPoint(x: run[run.count - 1].x, y: geometry.size.height))
+                            path.closeSubpath()
+                        }
+                        .fill(LinearGradient(colors: [color.opacity(0.30), color.opacity(0.0)],
+                                             startPoint: .top, endPoint: .bottom))
+                    }
+                }
                 Path { path in
-                    var connected = false
-                    for (index, optionalValue) in values.enumerated() {
-                        guard let value = optionalValue else { connected = false; continue }
-                        let x = values.count == 1 ? geometry.size.width / 2 : geometry.size.width * CGFloat(index) / CGFloat(values.count - 1)
-                        let y = geometry.size.height * (1 - CGFloat(max(0, value) / maximum))
-                        if connected { path.addLine(to: CGPoint(x: x, y: y)) }
-                        else { path.move(to: CGPoint(x: x, y: y)) }
-                        connected = true
+                    for run in runs {
+                        path.move(to: run[0])
+                        run.dropFirst().forEach { path.addLine(to: $0) }
                     }
                 }.stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 ForEach(Array(values.enumerated()), id: \.offset) { index, value in
                     if let value = value {
-                        Circle().fill(color).frame(width: 4, height: 4)
-                            .position(x: values.count == 1 ? geometry.size.width / 2 : geometry.size.width * CGFloat(index) / CGFloat(values.count - 1),
-                                y: geometry.size.height * (1 - CGFloat(max(0, value) / maximum)))
+                        let isLast = index == lastIndex
+                        Circle()
+                            .fill(color)
+                            .frame(width: isLast ? 7 : 4, height: isLast ? 7 : 4)
+                            .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: isLast ? 2 : 0))
+                            .shadow(color: isLast ? color.opacity(0.5) : .clear, radius: 3)
+                            .position(point(index, value))
                     }
                 }
             }

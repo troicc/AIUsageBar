@@ -58,7 +58,7 @@ enum L10n {
 
     static let simplifiedChinese: [String: String] = {
         var table: [String: String] = [:]
-        for part in [L10nTable.menu, L10nTable.settings, L10nTable.dashboard, L10nTable.data] {
+        for part in [L10nTable.menu, L10nTable.settings, L10nTable.dashboard, L10nTable.data, L10nTable.design] {
             table.merge(part) { first, _ in first }
         }
         return table

@@ -64,7 +64,10 @@ struct SubscriptionTimingCard: View {
         }
         .padding(compact ? 0 : 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(compact ? 0 : 0.035)))
+        .background(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
+            .fill(Color.primary.opacity(compact ? 0 : 0.045)))
+        .overlay(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
+            .strokeBorder(Color.primary.opacity(compact ? 0 : 0.08), lineWidth: 0.5))
     }
 
     private var editor: some View {

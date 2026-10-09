@@ -15,14 +15,32 @@ final class SettingsStore: ObservableObject {
 
         var symbol: String {
             switch self {
-            case .general: return "gearshape"
+            case .general: return "gearshape.fill"
             case .menuBar: return "menubar.rectangle"
-            case .notifications: return "bell"
-            case .usageData: return "chart.bar"
-            case .providers: return "square.grid.2x2"
-            case .advanced: return "wrench.and.screwdriver"
+            case .notifications: return "bell.badge.fill"
+            case .usageData: return "chart.bar.fill"
+            case .providers: return "square.grid.2x2.fill"
+            case .advanced: return "wrench.and.screwdriver.fill"
             }
         }
+
+        /// Fill of the System Settings–style icon tile in the sidebar.
+        var tint: Color {
+            switch self {
+            case .general: return Color(nsColor: .systemGray)
+            case .menuBar: return Color(nsColor: .systemBlue)
+            case .notifications: return Color(nsColor: .systemRed)
+            case .usageData: return Color(nsColor: .systemPurple)
+            case .providers: return Color(nsColor: .systemOrange)
+            case .advanced: return Color(red: 0.36, green: 0.40, blue: 0.48)
+            }
+        }
+    }
+
+    /// How a status message is presented: quiet messages only appear in the
+    /// Advanced result card, the rest as a tinted inline banner.
+    enum StatusTone: Equatable {
+        case quiet, info, success, warning, error
     }
 
     @Published var tab: Tab = .providers
@@ -35,7 +53,11 @@ final class SettingsStore: ObservableObject {
     @Published var region = ""
     @Published var revealAPIKey = false
     @Published var providerSearch = ""
-    @Published private(set) var status = L("Select a provider to configure authentication.")
+    @Published private(set) var status = L("Select a provider to configure authentication.") {
+        didSet { statusTone = .info }
+    }
+    /// Set after `status`; every assignment to `status` resets it to `.info`.
+    @Published private(set) var statusTone: StatusTone = .quiet
     @Published private(set) var isBusy = false
     @Published private(set) var configuredAccounts: [ConfiguredProviderAccount] = []
 
@@ -142,9 +164,11 @@ final class SettingsStore: ObservableObject {
             } else {
                 status = L("%d providers detected.", providers.count)
             }
+            statusTone = .quiet
             await reloadConfiguredAccounts()
         } catch {
             status = error.localizedDescription
+            statusTone = .error
         }
     }
 
@@ -153,6 +177,7 @@ final class SettingsStore: ObservableObject {
         clearCredentialFields()
         let profile = ProviderAuthenticationCatalog.profile(for: provider.id)
         status = "\(profile.title): \(profile.guidance)"
+        statusTone = .quiet
         Task { @MainActor in await reloadConfiguredAccounts() }
     }
 
@@ -166,6 +191,7 @@ final class SettingsStore: ObservableObject {
                 await reloadProviders()
             } catch {
                 status = error.localizedDescription
+                statusTone = .error
             }
             isBusy = false
         }
@@ -174,6 +200,7 @@ final class SettingsStore: ObservableObject {
     func pasteAPIKey() {
         guard let value = NSPasteboard.general.string(forType: .string), !value.isEmpty else {
             status = L("Clipboard does not contain text.")
+            statusTone = .warning
             return
         }
         apiKey = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -200,6 +227,7 @@ final class SettingsStore: ObservableObject {
               let profile = selectedAuthenticationProfile
         else {
             status = L("Select a provider first.")
+            statusTone = .warning
             return
         }
         guard profile.canSaveConfiguration else {
@@ -225,6 +253,7 @@ final class SettingsStore: ObservableObject {
                     profile: profile)
             } catch {
                 status = L("Save failed: %@", error.localizedDescription)
+                statusTone = .error
                 isBusy = false
                 return
             }
@@ -235,6 +264,7 @@ final class SettingsStore: ObservableObject {
             clearCredentialFields()
             await reloadProviders()
             status = L("%@ configuration saved and verified in %@.", provider.name, receipt.configURL.path)
+            statusTone = .success
             isBusy = false
         }
     }
@@ -247,9 +277,11 @@ final class SettingsStore: ObservableObject {
             do {
                 let result = try await client.refreshBrowserSession(provider: provider.id)
                 status = result.isEmpty ? L("Browser session refreshed for %@.", provider.name) : result
+                statusTone = .success
                 NotificationCenter.default.post(name: .providerConfigurationChanged, object: provider.id)
             } catch {
                 status = error.localizedDescription
+                statusTone = .error
             }
             isBusy = false
         }
@@ -263,9 +295,11 @@ final class SettingsStore: ObservableObject {
             do {
                 let result = try await client.clearBrowserSession(provider: provider.id)
                 status = result.isEmpty ? L("Browser cache cleared for %@.", provider.name) : result
+                statusTone = .success
                 NotificationCenter.default.post(name: .providerConfigurationChanged, object: provider.id)
             } catch {
                 status = error.localizedDescription
+                statusTone = .error
             }
             isBusy = false
         }
@@ -283,6 +317,7 @@ final class SettingsStore: ObservableObject {
                 NSWorkspace.shared.open(target)
             } catch {
                 status = L("Could not open config file: %@", error.localizedDescription)
+                statusTone = .error
             }
         }
     }
@@ -292,7 +327,10 @@ final class SettingsStore: ObservableObject {
         isBusy = true
         Task { @MainActor in
             do { status = try await client.validateConfig() }
-            catch { status = error.localizedDescription }
+            catch {
+                status = error.localizedDescription
+                statusTone = .error
+            }
             isBusy = false
         }
     }
@@ -306,6 +344,7 @@ final class SettingsStore: ObservableObject {
             FileManager.default.fileExists(atPath: $0.path)
         }) else {
             status = L("Console.app could not be found.")
+            statusTone = .error
             return
         }
         NSWorkspace.shared.open(console)
@@ -324,6 +363,7 @@ final class SettingsStore: ObservableObject {
         } catch {
             configuredAccounts = []
             status = L("Could not read configured accounts: %@", error.localizedDescription)
+            statusTone = .warning
         }
     }
 
@@ -343,8 +383,10 @@ final class SettingsStore: ObservableObject {
                 await reloadConfiguredAccounts()
                 NotificationCenter.default.post(name: .providerConfigurationChanged, object: provider.id)
                 status = L("%@ is now the active %@ account.", account.label, provider.name)
+                statusTone = .success
             } catch {
                 status = L("Account switch failed: %@", error.localizedDescription)
+                statusTone = .error
             }
             isBusy = false
         }
@@ -367,8 +409,10 @@ final class SettingsStore: ObservableObject {
                 await reloadConfiguredAccounts()
                 NotificationCenter.default.post(name: .providerConfigurationChanged, object: provider.id)
                 status = L("Removed %@ from %@.", account.label, provider.name)
+                statusTone = .success
             } catch {
                 status = L("Account removal failed: %@", error.localizedDescription)
+                statusTone = .error
             }
             isBusy = false
         }

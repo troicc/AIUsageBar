@@ -26,7 +26,7 @@ enum MenuBarDisplayStyle: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .meter: return L("Usage meter")
+        case .meter: return L("Quota ring")
         case .usedPercentage: return L("Used percentage")
         case .remainingPercentage: return L("Remaining percentage")
         case .providerIcon: return L("Provider icon")

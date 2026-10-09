@@ -11,10 +11,15 @@ final class SettingsWindowController: NSWindowController {
         self.dashboardStore = dashboardStore
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
         window.title = L("AIUsageBar Settings")
+        // System Settings look: the sidebar runs under the traffic lights.
+        // The title stays set for the Window menu and accessibility.
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = false
         let frameName = "AIUsageBar.SettingsWindow"
         if !window.setFrameUsingName(frameName) { window.center() }
         window.setFrameAutosaveName(frameName)

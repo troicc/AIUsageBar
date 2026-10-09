@@ -258,31 +258,29 @@ final class MenuController: NSObject, NSMenuDelegate {
         let hasAlert = Preferences.shared.showServiceStatus && snapshots.contains(where: \.hasVisibleAlert)
         let alertPrefix = hasAlert ? "! " : ""
 
+        let failed = !snapshots.isEmpty && snapshots.allSatisfy(\.isFailed)
+        let remaining = highest.map { max(0, 100 - $0) }
+        button.imagePosition = .imageLeading
         switch Preferences.shared.menuBarDisplayStyle {
         case .meter:
             button.title = hasAlert ? "!" : ""
-            button.image = meterImage(
-                percent: highest ?? 0,
-                failed: !snapshots.isEmpty && snapshots.allSatisfy(\.isFailed))
-            button.image?.isTemplate = true
+            button.image = Self.ringImage(remaining: remaining, failed: failed)
         case .usedPercentage:
             button.title = highest.map { alertPrefix + String(format: "%.0f%%", $0) } ?? "—"
-            button.image = nil
+            button.image = Self.ringImage(remaining: remaining, failed: failed, size: 13)
         case .remainingPercentage:
-            button.title = highest.map { alertPrefix + String(format: "%.0f%%", max(0, 100 - $0)) } ?? "—"
-            button.image = nil
+            button.title = remaining.map { alertPrefix + String(format: "%.0f%%", $0) } ?? "—"
+            button.image = Self.ringImage(remaining: remaining, failed: failed, size: 13)
         case .providerIcon:
             button.title = hasAlert ? "!" : ""
             if snapshots.count == 1, let snapshot = snapshots.first {
                 button.image = NSImage(
                     systemSymbolName: ProviderBrand.symbol(for: snapshot.provider),
                     accessibilityDescription: snapshot.displayName)
+                button.image?.isTemplate = true
             } else {
-                button.image = meterImage(
-                    percent: highest ?? 0,
-                    failed: !snapshots.isEmpty && snapshots.allSatisfy(\.isFailed))
+                button.image = Self.ringImage(remaining: remaining, failed: failed)
             }
-            button.image?.isTemplate = true
         }
 
         button.toolTip = statusItemTooltip(snapshots: snapshots)
@@ -418,17 +416,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         })
 
         menu.addItem(hostedMenuItem(in: menu) { [unowned self] () -> NativeMenuOverviewView in
-            let rows = self.store.snapshots.prefix(Preferences.shared.overviewProviderLimit).map { snapshot in
-                NativeMenuOverviewRow(
-                    id: snapshot.id,
-                    providerID: snapshot.provider,
-                    title: snapshot.displayName,
-                    account: snapshot.accountDisplayName,
-                    usedPercent: snapshot.headlineUsedPercent,
-                    quotaLabel: snapshot.headlineQuotaLabel,
-                    health: snapshot.serviceHealth,
-                    hasError: snapshot.error != nil)
-            }
+            let rows = self.overviewRows().prefix(Preferences.shared.overviewProviderLimit)
             return NativeMenuOverviewView(
                 rows: Array(rows),
                 totalCount: self.store.snapshots.count,
@@ -499,8 +487,11 @@ final class MenuController: NSObject, NSMenuDelegate {
                 title: snapshot.displayName,
                 subtitle: self.providerSubtitle(snapshot, dashboard: dashboard),
                 providerID: snapshot.provider,
-                health: Preferences.shared.showServiceStatus ? snapshot.serviceHealth : nil,
-                refreshing: self.store.isRefreshing)
+                // Incidents get a full banner in the card below; no duplicate chip.
+                health: Preferences.shared.showServiceStatus && !snapshot.serviceHealth.isIncident
+                    ? snapshot.serviceHealth : nil,
+                refreshing: self.store.isRefreshing,
+                planLabel: dashboard.planLabel ?? snapshot.planDisplayName)
         })
         menu.addItem(hostedMenuItem(in: menu) { () -> NativeMenuProviderCardView in
             let (snapshot, dashboard) = current()
@@ -589,12 +580,42 @@ final class MenuController: NSObject, NSMenuDelegate {
         return title
     }
 
+    /// Overview rows with the tightest quota first, so the provider that is
+    /// closest to running out is always at the top of the menu.
+    private func overviewRows() -> [NativeMenuOverviewRow] {
+        let rows = store.snapshots.map { snapshot -> NativeMenuOverviewRow in
+            let dashboard = store.dashboard(for: snapshot)
+            let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel } ?? dashboard.quotas.first
+            let balance = dashboard.metrics.first { $0.id == "balance" && !DS.isPlaceholder($0) }?.value
+            return NativeMenuOverviewRow(
+                id: snapshot.id,
+                providerID: snapshot.provider,
+                title: snapshot.displayName,
+                account: snapshot.accountDisplayName,
+                usedPercent: snapshot.headlineUsedPercent,
+                quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel,
+                health: snapshot.serviceHealth,
+                hasError: snapshot.error != nil,
+                resetsAt: headline?.resetsAt,
+                balanceText: balance)
+        }
+        return rows.enumerated().sorted { left, right in
+            switch (left.element.remainingPercent, right.element.remainingPercent) {
+            case let (l?, r?) where l != r: return l < r
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return left.offset < right.offset
+            }
+        }.map(\.element)
+    }
+
+    /// Plan is shown as a chip in the header, so the subtitle carries the
+    /// account and freshness.
     private func providerSubtitle(_ snapshot: ProviderSnapshot, dashboard: ProviderDashboard) -> String {
         var parts: [String] = []
         if Preferences.shared.showAccountInMenu, let account = snapshot.accountDisplayName { parts.append(account) }
-        if let plan = snapshot.planDisplayName, !plan.isEmpty { parts.append(plan) }
-        if let source = dashboard.source, !source.isEmpty { parts.append(source) }
-        return parts.isEmpty ? dashboard.updatedText : parts.joined(separator: " · ")
+        parts.append(dashboard.updatedText)
+        return parts.joined(separator: " · ")
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -635,7 +656,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private static func fit(_ hosting: NSView) {
         let fitting = hosting.fittingSize
-        hosting.frame = NSRect(x: 0, y: 0, width: 310, height: max(1, fitting.height))
+        hosting.frame = NSRect(x: 0, y: 0, width: NativeMenuLayout.width, height: max(1, fitting.height))
     }
 
     private func menuItem(
@@ -841,39 +862,47 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func meterImage(percent: Double, failed: Bool) -> NSImage {
-        let size = NSSize(width: 18, height: 16)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        let used = max(0, min(100, percent)) / 100
-        let barWidth: CGFloat = 5
-        let gap: CGFloat = 2
-        let baseY: CGFloat = 2
-        let maxHeight: CGFloat = 12
-        NSColor.labelColor.withAlphaComponent(failed ? 0.22 : 0.18).setFill()
-        NSBezierPath(
-            roundedRect: NSRect(x: 3, y: baseY, width: barWidth, height: maxHeight),
-            xRadius: 1.5,
-            yRadius: 1.5).fill()
-        NSBezierPath(
-            roundedRect: NSRect(x: 3 + barWidth + gap, y: baseY, width: barWidth, height: maxHeight),
-            xRadius: 1.5,
-            yRadius: 1.5).fill()
-        NSColor.labelColor.setFill()
-        let fillHeight = max(1, maxHeight * used)
-        NSBezierPath(
-            roundedRect: NSRect(x: 3, y: baseY, width: barWidth, height: fillHeight),
-            xRadius: 1.5,
-            yRadius: 1.5).fill()
-        NSBezierPath(
-            roundedRect: NSRect(
-                x: 3 + barWidth + gap,
-                y: baseY,
-                width: barWidth,
-                height: max(1, maxHeight * min(1, used * 0.72))),
-            xRadius: 1.5,
-            yRadius: 1.5).fill()
-        image.unlockFocus()
+    /// Status-item gauge: a ring whose arc is the quota left. It is a
+    /// template image like other menu extras, except when almost nothing is
+    /// left, where it turns red the way the battery icon does.
+    static func ringImage(remaining: Double?, failed: Bool, size: CGFloat = 16) -> NSImage {
+        let fraction = CGFloat(max(0, min(100, remaining ?? 0)) / 100)
+        let critical = !failed && remaining.map { $0 < 15 } == true
+        let image = NSImage(size: NSSize(width: size + 2, height: size), flipped: false) { rect in
+            let lineWidth: CGFloat = size >= 16 ? 2.4 : 2.1
+            let inset = lineWidth / 2 + 0.5
+            let circleRect = NSRect(x: 1 + inset, y: inset, width: size - inset * 2, height: size - inset * 2)
+            let center = NSPoint(x: circleRect.midX, y: circleRect.midY)
+            let radius = circleRect.width / 2
+
+            let track = NSBezierPath(ovalIn: circleRect)
+            track.lineWidth = lineWidth
+            (critical ? NSColor.labelColor.withAlphaComponent(0.3) : NSColor.black.withAlphaComponent(0.28)).setStroke()
+            track.stroke()
+
+            guard remaining != nil, !failed, fraction > 0 else {
+                if failed {
+                    let slash = NSBezierPath()
+                    slash.move(to: NSPoint(x: circleRect.minX + 2, y: circleRect.minY + 2))
+                    slash.line(to: NSPoint(x: circleRect.maxX - 2, y: circleRect.maxY - 2))
+                    slash.lineWidth = lineWidth
+                    slash.lineCapStyle = .round
+                    NSColor.black.setStroke()
+                    slash.stroke()
+                }
+                return true
+            }
+            let arc = NSBezierPath()
+            arc.appendArc(withCenter: center, radius: radius, startAngle: 90,
+                          endAngle: 90 - 360 * fraction, clockwise: true)
+            arc.lineWidth = lineWidth
+            arc.lineCapStyle = .round
+            (critical ? NSColor.systemRed : NSColor.black).setStroke()
+            arc.stroke()
+            return true
+        }
+        image.isTemplate = !critical
+        image.accessibilityDescription = remaining.map { L("%@%% remaining", String(format: "%.0f", $0)) }
         return image
     }
 }

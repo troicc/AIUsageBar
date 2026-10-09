@@ -170,7 +170,9 @@ assert "headlineUsedPercent" in models
 assert 'return abs(minutes - 300) <= 1' in models
 assert 'return "5h"' in models
 assert "usedPercent: snapshot.headlineUsedPercent" in menu
-assert "quotaLabel: snapshot.headlineQuotaLabel" in menu
+# The menu keeps the headline window; its chip shows that window's localized title.
+assert "$0.title == snapshot.headlineQuotaLabel" in menu
+assert "quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel" in menu
 assert "quota_trend_store_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert "local_spend_history_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert "token_history_store_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()

@@ -23,6 +23,8 @@ struct ClaudeQuotaHistoryView: View {
         self.now = now
     }
 
+    private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
+
     private var series: ClaudeQuotaSeries? {
         dashboard.claudeQuotaHistory.first { $0.id == selected } ?? dashboard.claudeQuotaHistory.first
     }
@@ -40,15 +42,26 @@ struct ClaudeQuotaHistoryView: View {
                 }
                 if let series = series, let last = series.samples.last {
                     summary(series, last: last)
-                    ClaudeQuotaPlot(series: series, now: now)
+                    // Per-segment source coloring is an estimate; when the
+                    // account reports the official breakdown, show that instead.
+                    ClaudeQuotaPlot(series: series, now: now, showsSources: official == nil)
                         .frame(height: 128)
                     timeAxis
-                    legend(series)
+                    if official == nil { legend(series) }
                 } else {
                     Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
                         .font(.system(size: 11)).foregroundColor(.secondary)
                 }
-                Text(L("Shared by web, desktop and Claude Code. Sources are estimated from Claude Code activity on this Mac; web chat tokens and costs are not available."))
+                if let official = official {
+                    Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+                    ClaudeProductBreakdownView(breakdown: official)
+                }
+                if let credit = dashboard.claudeIncludedCredit {
+                    ClaudeIncludedCreditView(credit: credit)
+                }
+                Text(official != nil
+                     ? L("Shared by Claude Code, Cowork, chats and other apps. The weekly breakdown comes from your Claude account.")
+                     : L("Shared by web, desktop and Claude Code. Sources are estimated from Claude Code activity on this Mac; web chat tokens and costs are not available."))
                     .font(.system(size: 10)).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if series != nil, let notice = dashboard.claudeQuotaHistoryNotice {
@@ -193,6 +206,7 @@ private struct QuotaWindowSwitch: View {
 private struct ClaudeQuotaPlot: View {
     let series: ClaudeQuotaSeries
     let now: Date
+    var showsSources = true
 
     private func point(_ sample: ClaudeQuotaSample, size: CGSize) -> CGPoint {
         let fraction = max(0, min(1, sample.timestamp.timeIntervalSince(now.addingTimeInterval(-86400)) / 86400))
@@ -309,7 +323,8 @@ private struct ClaudeQuotaPlot: View {
     }
 
     private func otherDeviceSegments(_ run: [Int]) -> [Int] {
-        (0..<max(0, run.count - 1)).filter { series.sources[series.samples[run[$0 + 1]].timestamp] == .otherDevices }
+        guard showsSources else { return [] }
+        return (0..<max(0, run.count - 1)).filter { series.sources[series.samples[run[$0 + 1]].timestamp] == .otherDevices }
     }
 
     private func segmentPath(_ points: [CGPoint], _ i: Int, size: CGSize) -> Path {

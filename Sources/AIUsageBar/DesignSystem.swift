@@ -194,10 +194,12 @@ struct UsageRing: View {
 
     var body: some View {
         let fraction = CGFloat(max(0, min(100, displayed ?? 0)) / 100)
-        let colors = tint.map { [$0.opacity(0.7), $0] } ?? DS.gradient(remaining: remaining)
+        // Solid color: gradients soften the edge of thin strokes.
+        let solid = tint ?? DS.tone(remaining: remaining)
+        let colors = [solid, solid]
         ZStack {
             Circle()
-                .stroke((tint ?? Color.primary).opacity(tint == nil ? 0.09 : 0.16), lineWidth: lineWidth)
+                .stroke(Color.primary.opacity(0.1), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: remaining == nil ? 0 : max(0.001, fraction))
                 .stroke(
@@ -283,45 +285,6 @@ struct Sparkline: View {
                 .stroke(tint, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
             }
         }
-        .accessibilityHidden(true)
-    }
-}
-
-/// Activity-style concentric rings: one ring per provider, outermost first,
-/// each in its brand color, showing how much of its headline quota is left.
-struct ConcentricQuotaRings: View {
-    struct Ring: Identifiable {
-        let id: String
-        let remaining: Double
-        let color: Color
-    }
-
-    let rings: [Ring]
-    var size: CGFloat = 92
-    var lineWidth: CGFloat = 9
-    var spacing: CGFloat = 2.5
-
-    var body: some View {
-        ZStack {
-            ForEach(Array(rings.enumerated()), id: \.element.id) { index, ring in
-                let diameter = size - CGFloat(index) * (lineWidth + spacing) * 2
-                let fraction = CGFloat(max(0, min(100, ring.remaining)) / 100)
-                ZStack {
-                    Circle().stroke(ring.color.opacity(0.16), lineWidth: lineWidth)
-                    Circle()
-                        .trim(from: 0, to: max(0.001, fraction))
-                        .stroke(
-                            AngularGradient(colors: [ring.color.opacity(0.72), ring.color],
-                                            center: .center,
-                                            startAngle: .degrees(0),
-                                            endAngle: .degrees(360 * Double(max(0.001, fraction)))),
-                            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                .frame(width: max(0, diameter - lineWidth), height: max(0, diameter - lineWidth))
-            }
-        }
-        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }

@@ -44,6 +44,15 @@ enum UIGallery {
             let supplement = await client.dashboardSupplementJSON(provider: snapshot.provider)
             var dashboard = DashboardParser.dashboard(snapshot: snapshot, supplementalJSON: supplement)
             if snapshot.provider == "claude" {
+                // Official account usage from a saved API response (the
+                // gallery never reads the keychain itself).
+                if let path = ProcessInfo.processInfo.environment["AIUSAGEBAR_GALLERY_CLAUDE_USAGE"],
+                   let data = FileManager.default.contents(atPath: path),
+                   let usage = ClaudeAccountUsage.parse(data)
+                {
+                    dashboard.claudeProductBreakdown = usage.breakdown
+                    dashboard.claudeIncludedCredit = usage.includedCredit
+                }
                 dashboard.claudeQuotaHistory = quotaHistory.record(snapshot: snapshot)
                     .map { $0.attributed(activeMinutes: activeMinutes) }
                 for series in dashboard.claudeQuotaHistory {

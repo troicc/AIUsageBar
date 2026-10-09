@@ -52,6 +52,10 @@ final class DashboardStore: ObservableObject {
     /// between Claude Code and web/desktop/other devices.
     private let claudeActivity = ClaudeCodeActivityLog()
     private var claudeActiveMinutes: Set<Int> = []
+    /// Official account usage (per-product breakdown, included credit),
+    /// read with Claude Code's own sign-in.
+    private let claudeAccountClient = ClaudeAccountUsageClient()
+    private var claudeAccountUsage: ClaudeAccountUsage?
     private let spendHistoryStore = LocalSpendHistoryStore()
     private let tokenHistoryStore: LocalTokenHistoryStore
 
@@ -93,6 +97,12 @@ final class DashboardStore: ObservableObject {
         do {
             let loaded = try await client.fetchEnabled(status: true)
             claudeActiveMinutes = await activity
+            // Only one Claude account can be matched to Claude Code's sign-in.
+            if loaded.filter({ $0.provider == "claude" }).count == 1 {
+                claudeAccountUsage = await claudeAccountClient.usage()
+            } else {
+                claudeAccountUsage = nil
+            }
             snapshots = loaded.sorted { left, right in
                 let providerOrder = left.displayName.localizedCaseInsensitiveCompare(right.displayName)
                 if providerOrder != .orderedSame { return providerOrder == .orderedAscending }
@@ -275,6 +285,8 @@ final class DashboardStore: ObservableObject {
         guard snapshot.provider == "claude" else { return }
         dashboard.claudeQuotaHistory = claudeQuotaHistoryStore.record(snapshot: snapshot)
             .map { $0.attributed(activeMinutes: claudeActiveMinutes) }
+        dashboard.claudeProductBreakdown = claudeAccountUsage?.breakdown
+        dashboard.claudeIncludedCredit = claudeAccountUsage?.includedCredit
         dashboard.claudeQuotaHistoryNotice = snapshot.claudeQuotaAccountKey == nil
             ? L("Account identity unavailable. History starts after this account can be identified.")
             : claudeQuotaHistoryStore.persistenceError
@@ -287,6 +299,8 @@ final class DashboardStore: ObservableObject {
                 supplementalJSON: presentationSupplementBySnapshot[snapshot.id])
             rebuilt[snapshot.id]?.claudeQuotaHistory = dashboards[snapshot.id]?.claudeQuotaHistory ?? []
             rebuilt[snapshot.id]?.claudeQuotaHistoryNotice = dashboards[snapshot.id]?.claudeQuotaHistoryNotice
+            rebuilt[snapshot.id]?.claudeProductBreakdown = dashboards[snapshot.id]?.claudeProductBreakdown
+            rebuilt[snapshot.id]?.claudeIncludedCredit = dashboards[snapshot.id]?.claudeIncludedCredit
         }
         dashboards = rebuilt
         onRefreshStateChanged?()

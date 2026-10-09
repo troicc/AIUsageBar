@@ -94,34 +94,22 @@ struct NativeMenuOverviewView: View {
     let showAccount: Bool
     let showStatus: Bool
 
-    private var ringRows: [NativeMenuOverviewRow] {
-        Array(rows.filter { $0.remainingPercent != nil && !$0.hasError }.prefix(3))
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if rows.isEmpty {
                 emptyState
             } else {
-                HStack(alignment: .center, spacing: 18) {
-                    if !ringRows.isEmpty {
-                        ConcentricQuotaRings(
-                            rings: ringRows.map {
-                                ConcentricQuotaRings.Ring(id: $0.id, remaining: $0.remainingPercent ?? 0,
-                                                          color: ProviderBrand.color(for: $0.providerID))
-                            },
-                            size: ringRows.count > 2 ? 104 : 92,
-                            lineWidth: ringRows.count > 2 ? 9 : 10)
+                // Batteries-widget layout: one gauge per provider, side by side.
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4, alignment: .top),
+                                         count: min(4, max(rows.count, 3))),
+                          alignment: .center, spacing: 14) {
+                    ForEach(rows) { row in
+                        gaugeTile(row)
                     }
-                    VStack(alignment: .leading, spacing: 11) {
-                        ForEach(rows) { row in
-                            legendRow(row)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, NativeMenuLayout.inset)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
             }
 
             if totalCount > rows.count {
@@ -152,59 +140,63 @@ struct NativeMenuOverviewView: View {
         .padding(.vertical, 16)
     }
 
-    private func legendRow(_ row: NativeMenuOverviewRow) -> some View {
-        let color = ProviderBrand.color(for: row.providerID)
-        return HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Circle()
-                .fill(row.remainingPercent == nil && row.balanceText == nil ? Color.secondary.opacity(0.4) : color)
-                .frame(width: 7, height: 7)
-                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
+    private func gaugeTile(_ row: NativeMenuOverviewRow) -> some View {
+        VStack(spacing: 6) {
+            ZStack {
+                Circle()
+                    .stroke(Color.primary.opacity(0.1), lineWidth: 5)
+                if let remaining = row.remainingPercent, !row.hasError {
+                    let shown = quotaPresentation == .used ? 100 - remaining : remaining
+                    Circle()
+                        .trim(from: 0, to: max(0.004, CGFloat(shown / 100)))
+                        .stroke(DS.tone(remaining: remaining), style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                Image(systemName: row.hasError ? "exclamationmark" : ProviderBrand.symbol(for: row.providerID))
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundColor(row.hasError ? Color(nsColor: .systemRed) : ProviderBrand.color(for: row.providerID))
+            }
+            .frame(width: 50, height: 50)
+
+            value(row)
+                .frame(height: 20)
+
+            VStack(spacing: 1) {
+                HStack(spacing: 3) {
                     Text(row.title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .lineLimit(1)
-                    if showStatus, row.hasError || row.health.isIncident {
-                        Circle()
-                            .fill(DS.healthColor(row.hasError ? .outage : row.health))
-                            .frame(width: 5, height: 5)
+                    if showStatus, row.health.isIncident {
+                        Circle().fill(DS.healthColor(row.health)).frame(width: 5, height: 5)
                     }
                 }
-                Text(detail(row))
+                Text(caption(row))
                     .font(.system(size: 10))
                     .foregroundColor(row.hasError ? Color(nsColor: .systemRed) : .secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .minimumScaleFactor(0.85)
             }
-            Spacer(minLength: 4)
-            value(row)
         }
+        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
     }
 
-    private func detail(_ row: NativeMenuOverviewRow) -> String {
+    private func caption(_ row: NativeMenuOverviewRow) -> String {
         if row.hasError { return L("Connection error") }
-        var parts: [String] = []
-        if row.balanceText != nil, row.remainingPercent == nil {
-            parts.append(L("Balance"))
-        } else if let label = row.quotaLabel {
-            parts.append(label)
-        }
+        if row.remainingPercent == nil { return row.balanceText != nil ? L("Balance") : "—" }
         if let resetsAt = row.resetsAt, let countdown = DS.countdown(to: resetsAt) {
-            parts.append(L("Resets in %@", countdown))
-        } else if showAccount, let account = row.account, account != "Default" {
-            parts.append(account)
+            return L("Resets in %@", countdown)
         }
-        return parts.joined(separator: " · ")
+        return row.quotaLabel ?? ""
     }
 
     @ViewBuilder
     private func value(_ row: NativeMenuOverviewRow) -> some View {
-        if let remaining = row.remainingPercent {
+        if let remaining = row.remainingPercent, !row.hasError {
             let shown = quotaPresentation == .used ? 100 - remaining : remaining
             HStack(alignment: .firstTextBaseline, spacing: 1) {
                 Text(String(format: "%.0f", shown))
-                    .font(.system(size: 20, weight: .light, design: .rounded).monospacedDigit())
+                    .font(.system(size: 19, weight: .light, design: .rounded).monospacedDigit())
                     .foregroundColor(remaining < 15 ? Color(nsColor: .systemRed) : .primary)
                 Text("%")
                     .font(.system(size: 11, weight: .light, design: .rounded))
@@ -214,10 +206,10 @@ struct NativeMenuOverviewView: View {
             Text(balance)
                 .font(.system(size: 15, weight: .light, design: .rounded).monospacedDigit())
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.6)
         } else {
             Text("—")
-                .font(.system(size: 15, weight: .light, design: .rounded))
+                .font(.system(size: 17, weight: .light, design: .rounded))
                 .foregroundColor(.secondary)
         }
     }
@@ -364,7 +356,16 @@ struct NativeMenuProviderCardView: View {
     private var footer: some View {
         let hasMore = dashboard.metrics.count > 4 || dashboard.quotas.count > 4
         MenuHairline()
+        if let breakdown = dashboard.claudeProductBreakdown {
+            ClaudeProductBreakdownView(breakdown: breakdown, compact: true)
+                .padding(.horizontal, NativeMenuLayout.inset)
+                .padding(.vertical, 10)
+            MenuHairline()
+        }
         VStack(alignment: .leading, spacing: 5) {
+            if let credit = dashboard.claudeIncludedCredit {
+                ClaudeIncludedCreditView(credit: credit, compact: true)
+            }
             SubscriptionTimingView(dashboard: dashboard, compact: true)
             if snapshot.provider == "claude" {
                 Label(dashboard.hasClaudeSharedQuota

@@ -82,6 +82,7 @@ swiftc -module-cache-path "$MODULE_CACHE" \
   "$ROOT/Sources/AIUsageBar/JSONHelpers.swift" \
   "$ROOT"/Sources/AIUsageBar/L10n*.swift \
   "$ROOT/Sources/AIUsageBar/ClaudeQuotaHistory.swift" \
+  "$ROOT/Sources/AIUsageBar/ClaudeAccountUsage.swift" \
   "$ROOT/Scripts/claude_quota_history_regression.swift" \
   -o "$TMP/claude-quota-history-regression"
 "$TMP/claude-quota-history-regression"

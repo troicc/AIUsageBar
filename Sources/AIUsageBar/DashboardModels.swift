@@ -187,6 +187,9 @@ struct ProviderDashboard: Identifiable, Hashable {
     var hasClaudeSharedQuota = false
     var claudeQuotaHistory: [ClaudeQuotaSeries] = []
     var claudeQuotaHistoryNotice: String? = nil
+    /// Official per-product share of this week's usage, when available.
+    var claudeProductBreakdown: ClaudeProductBreakdown? = nil
+    var claudeIncludedCredit: ClaudeIncludedCredit? = nil
 
     var quotaSectionTitle: String { hasClaudeSharedQuota ? L("Subscription quota · all devices") : L("Quotas") }
     var summarySectionTitle: String { id == "claude" ? L("Local usage") : L("Summary") }

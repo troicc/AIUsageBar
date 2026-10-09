@@ -84,6 +84,24 @@ struct ClaudeQuotaHistoryRegression {
         print("PASS | Claude shared quota: identity/source isolation, timestamps, resets, gaps, persistence and token separation")
         let drifted = ClaudeQuotaSample(timestamp: t0.addingTimeInterval(600), usedPercent: 12, resetsAt: reset.addingTimeInterval(37))
         precondition(ClaudeQuotaSeries.connects(attributionSeries.samples[0], drifted), "seconds of reset drift stay one window")
+        // Official account usage: per-product weekly breakdown and the
+        // included credit (the window that carries dollar amounts).
+        let accountJSON = Data("""
+        {"five_hour":{"utilization":91.0,"limit_dollars":null,"resets_at":"2026-10-09T13:20:00Z"},
+         "iguana_necktie":{"limit_dollars":250,"remaining_dollars":250.0,"used_dollars":0.0,"resets_at":"2026-11-05T07:59:00+00:00"},
+         "seven_day_breakdown":{"as_of":"2026-10-09T12:49:13.754853+00:00","window_started_at":"2026-10-08T23:00:00+00:00",
+           "rows":[{"display_name":"Claude Code","key":"claude_code","percent":24},{"display_name":"Chats","key":"chat","percent":2},
+                   {"display_name":"Cowork","key":"cowork","percent":74},{"display_name":"Other","key":"other","percent":0}]}}
+        """.utf8)
+        let account = ClaudeAccountUsage.parse(accountJSON)
+        precondition(account?.breakdown?.rows.map(\.key) == ["claude_code", "chat", "cowork", "other"])
+        precondition(account?.breakdown?.rows.first { $0.key == "cowork" }?.percent == 74)
+        precondition(account?.breakdown?.windowStartedAt != nil && account?.breakdown?.asOf != nil)
+        precondition(account?.includedCredit == ClaudeIncludedCredit(limitDollars: 250, remainingDollars: 250,
+            expiresAt: FlexibleDate.iso8601("2026-11-05T07:59:00+00:00")))
+        precondition(ClaudeAccountUsage.parse(Data("{\"five_hour\":{\"utilization\":1}}".utf8)) == nil)
+        precondition(ClaudeAccountUsage.parse(Data("not json".utf8)) == nil)
         print("PASS | Claude quota attribution: local Claude Code vs other devices, gaps and flat intervals")
+        print("PASS | Claude account usage: official product breakdown and included credit")
     }
 }

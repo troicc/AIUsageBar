@@ -2,6 +2,18 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-09 第三轮：官方按产品用量、电池小组件式概览
+
+- 用户指出本机估算（Claude Code 83% / 其他 17%）和 claude.ai 设置页差很多。官方是 Cowork 74%、Claude Code 24%、Chats 2%。Cowork 不写本机 Claude Code 日志，所以估算必然偏差。
+- **官方数据来源**：`https://api.anthropic.com/api/oauth/usage`（`anthropic-beta: oauth-2025-04-20`）。返回中：
+  - `seven_day_breakdown.rows[{key, display_name, percent}]` 加 `window_started_at`/`as_of`，就是网页的“This week's usage by product”；
+  - 带 `limit_dollars`/`remaining_dollars` 的代号窗口（当前叫 `iguana_necktie`）是“Included credit”。
+  - 引擎对这位用户走 CLI 数据源，不请求这个接口，引擎也不输出这些字段。
+- **实现**：`ClaudeAccountUsageClient`（actor）用 `SecItemCopyMatching` 读取钥匙串里 Claude Code 自己的登录凭据（服务名 `Claude Code-credentials`）。只读，token 只发往 api.anthropic.com；5 分钟缓存；token 过期就跳过；用户拒绝钥匙串访问后，本次运行不再询问。首次访问会弹出系统钥匙串授权；ad-hoc 签名每次重新构建后都会再问一次。只有在恰好启用 1 个 Claude 账号时才附加到 dashboard。
+- **展示**：趋势卡片有官方数据时显示官方的 `ClaudeProductBreakdownView`，曲线不再按来源上色；没有官方数据时才退回本机估算。Claude 子菜单显示紧凑的分布条和附赠额度。
+- **概览**：同心双环被用户评价为“low、不清晰”，改为类似 macOS 电池小组件：每个服务商一个独立实色环（按剩余量变色、中性灰底），环中是品牌图标，下方是细字号百分比、名称和倒计时。`UsageRing` 改为实色加中性底，`ConcentricQuotaRings` 已删除。
+- 画廊：`AIUSAGEBAR_GALLERY_CLAUDE_USAGE=<保存的接口 JSON>` 用来注入官方数据。画廊本身不读钥匙串，避免在用户屏幕上弹窗。
+
 ## 2026-10-09 第二轮：更克制的高级感、网页端额度估算、趋势图与设置滚动卡顿
 
 - **设置页滚动卡顿（已测量并修复）**：

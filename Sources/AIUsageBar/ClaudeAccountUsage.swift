@@ -72,6 +72,10 @@ struct ClaudeAccountUsage: Hashable {
 actor ClaudeAccountUsageClient {
     private static let keychainService = "Claude Code-credentials"
     private static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    private static let userAgent: String = {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return "AIUsageBar/\(version ?? "dev")"
+    }()
     private let cacheLifetime: TimeInterval = 5 * 60
     private var cached: (fetchedAt: Date, usage: ClaudeAccountUsage?)?
     private var accessDenied = false
@@ -85,7 +89,8 @@ actor ClaudeAccountUsageClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("claude-code/2.1.0", forHTTPHeaderField: "User-Agent")
+        // Identify honestly; the endpoint does not require a Claude Code agent.
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return cached?.usage }

@@ -88,7 +88,9 @@ actor ClaudeAccountUsageClient {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("claude-code/2.1.0", forHTTPHeaderField: "User-Agent")
+        // Pinned to the Claude Code release installed when this was set
+        // (2026-10-09); intentionally not updated automatically.
+        request.setValue("claude-code/2.1.295", forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return cached?.usage }

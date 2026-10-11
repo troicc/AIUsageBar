@@ -99,21 +99,25 @@ struct ClaudeQuotaHistoryView: View {
     }
 
     /// Labels at whole local hours (every 6 h), placed where they fall.
+    /// Ticks too close to "Now" or the left edge are dropped so labels never overlap.
     private var timeAxis: some View {
         GeometryReader { geometry in
             let start = now.addingTimeInterval(-86_400)
             let calendar = Calendar.current
             let firstHour = calendar.nextDate(after: start, matching: DateComponents(minute: 0),
                                               matchingPolicy: .nextTime) ?? start
-            let ticks = (0..<24).compactMap { offset -> Date? in
-                let date = firstHour.addingTimeInterval(Double(offset) * 3600)
-                return calendar.component(.hour, from: date) % 6 == 0 && date < now.addingTimeInterval(-3600) ? date : nil
-            }
             let plotWidth = max(0, geometry.size.width - 32)
+            let ticks = (0..<24).compactMap { offset -> (date: Date, x: CGFloat)? in
+                let date = firstHour.addingTimeInterval(Double(offset) * 3600)
+                let x = 4 + CGFloat(date.timeIntervalSince(start) / 86_400) * plotWidth
+                guard calendar.component(.hour, from: date) % 6 == 0,
+                      x >= 14, x <= 4 + plotWidth - 30 else { return nil }
+                return (date, x)
+            }
             ZStack(alignment: .topLeading) {
-                ForEach(ticks, id: \.self) { tick in
-                    Text(Self.hourFormatter.string(from: tick))
-                        .position(x: 4 + CGFloat(tick.timeIntervalSince(start) / 86_400) * plotWidth, y: 6)
+                ForEach(ticks, id: \.date) { tick in
+                    Text(Self.hourFormatter.string(from: tick.date))
+                        .position(x: tick.x, y: 6)
                 }
                 Text(L("Now")).position(x: 4 + plotWidth, y: 6)
             }
@@ -208,10 +212,14 @@ private struct ClaudeQuotaPlot: View {
     let now: Date
     var showsSources = true
 
+    private func x(_ date: Date, size: CGSize) -> CGFloat {
+        let fraction = max(0, min(1, date.timeIntervalSince(now.addingTimeInterval(-86400)) / 86400))
+        return 4 + fraction * max(0, size.width - 32)
+    }
+
     private func point(_ sample: ClaudeQuotaSample, size: CGSize) -> CGPoint {
-        let fraction = max(0, min(1, sample.timestamp.timeIntervalSince(now.addingTimeInterval(-86400)) / 86400))
-        return CGPoint(x: 4 + fraction * max(0, size.width - 32),
-                       y: 6 + (1 - sample.usedPercent / 100) * max(0, size.height - 12))
+        CGPoint(x: x(sample.timestamp, size: size),
+                y: 6 + (1 - sample.usedPercent / 100) * max(0, size.height - 12))
     }
 
     /// Indices of samples grouped into connected runs.
@@ -286,16 +294,16 @@ private struct ClaudeQuotaPlot: View {
     @ViewBuilder
     private func resetMarkers(_ size: CGSize) -> some View {
         ForEach(resetIndices, id: \.self) { index in
-            let x = point(series.samples[index], size: size).x
+            let markerX = x(series.windowStart(at: index), size: size)
             Path { path in
-                path.move(to: CGPoint(x: x, y: 0))
-                path.addLine(to: CGPoint(x: x, y: size.height))
+                path.move(to: CGPoint(x: markerX, y: 0))
+                path.addLine(to: CGPoint(x: markerX, y: size.height))
             }
             .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
             Text(L("Reset"))
                 .font(.system(size: 8, weight: .medium))
                 .foregroundColor(.secondary)
-                .position(x: x, y: 4)
+                .position(x: markerX, y: 4)
         }
     }
 

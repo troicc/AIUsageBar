@@ -28,6 +28,25 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
 
     var attributedPoints: Double { claudeCodePoints + otherDevicePoints }
 
+    var windowDuration: TimeInterval? {
+        switch id {
+        case "five-hour": return 5 * 3600
+        case "weekly": return 7 * 86_400
+        default: return nil
+        }
+    }
+
+    /// When the window of the sample at `index` began: its reset time minus the
+    /// window length, kept between the previous sample and this one. Falls back
+    /// to the sample's own timestamp when the start cannot be derived.
+    func windowStart(at index: Int) -> Date {
+        let sample = samples[index]
+        guard let resetsAt = sample.resetsAt, let duration = windowDuration else { return sample.timestamp }
+        let start = resetsAt.addingTimeInterval(-duration)
+        let earliest = index > 0 ? samples[index - 1].timestamp : .distantPast
+        return min(max(start, earliest), sample.timestamp)
+    }
+
     /// Splits quota consumption between local Claude Code and everything
     /// else. A rise counts as Claude Code when Claude Code logged any usage
     /// between the two samples (with `slack` before the first, since the

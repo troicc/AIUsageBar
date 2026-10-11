@@ -84,6 +84,26 @@ struct ClaudeQuotaHistoryRegression {
         print("PASS | Claude shared quota: identity/source isolation, timestamps, resets, gaps, persistence and token separation")
         let drifted = ClaudeQuotaSample(timestamp: t0.addingTimeInterval(600), usedPercent: 12, resetsAt: reset.addingTimeInterval(37))
         precondition(ClaudeQuotaSeries.connects(attributionSeries.samples[0], drifted), "seconds of reset drift stay one window")
+        // Reset markers sit at the new window's start (reset time minus the
+        // window length), not at the first sample observed after the reset.
+        let newReset = t0.addingTimeInterval(12 * 3600)
+        let resetSeries = ClaudeQuotaSeries(id: "five-hour", title: "5 hours", samples: [
+            ClaudeQuotaSample(timestamp: t0, usedPercent: 40, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(8 * 3600), usedPercent: 3, resetsAt: newReset),
+        ])
+        precondition(resetSeries.windowStart(at: 1) == t0.addingTimeInterval(7 * 3600), "window start is reset minus 5 h")
+        let earlySample = ClaudeQuotaSeries(id: "five-hour", title: "5 hours", samples: [
+            ClaudeQuotaSample(timestamp: t0, usedPercent: 40, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(600), usedPercent: 3, resetsAt: newReset),
+        ])
+        precondition(earlySample.windowStart(at: 1) == t0.addingTimeInterval(600), "window start never follows its sample")
+        let lateReset = ClaudeQuotaSeries(id: "five-hour", title: "5 hours", samples: [
+            ClaudeQuotaSample(timestamp: t0, usedPercent: 40, resetsAt: reset),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(3600), usedPercent: 3, resetsAt: t0.addingTimeInterval(2 * 3600)),
+        ])
+        precondition(lateReset.windowStart(at: 1) == t0, "window start never precedes the previous sample")
+        precondition(ClaudeQuotaSeries(id: "other", title: "Other", samples: resetSeries.samples)
+            .windowStart(at: 1) == resetSeries.samples[1].timestamp, "unknown window falls back to the sample")
         // Official account usage: per-product weekly breakdown and the
         // included credit (the window that carries dollar amounts).
         let accountJSON = Data("""

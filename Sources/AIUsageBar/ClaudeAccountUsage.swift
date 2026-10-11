@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// Official per-product share of this week's Claude usage, as shown under
 /// claude.ai → Settings → Usage ("This week's usage by product").
@@ -69,8 +68,7 @@ struct ClaudeAccountUsage: Hashable {
 /// stored in the login keychain. Read-only; the token is sent only to
 /// api.anthropic.com, only while the user is viewing Claude (submenu,
 /// detail or all-providers popover) and at most every 15 minutes.
-/// The first read shows the standard keychain prompt;
-/// if the user denies it, the app stops asking until next launch.
+/// If the user denies the keychain prompt, the app stops asking until next launch.
 actor ClaudeAccountUsageClient {
     private static let keychainService = "Claude Code-credentials"
     private static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
@@ -102,21 +100,27 @@ actor ClaudeAccountUsageClient {
         }
     }
 
+    /// Reads through `/usr/bin/security`, the tool Claude Code itself uses to
+    /// write this item. The item's access list already trusts it, so neither
+    /// Claude Code's token refreshes (which rewrite the item and drop apps the
+    /// user allowed) nor rebuilds of this ad-hoc signed app prompt again.
     private func readAccessToken(now: Date) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.keychainService,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecAuthFailed || status == errSecUserCanceled || status == errSecInteractionNotAllowed {
-            accessDenied = true
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        process.arguments = ["find-generic-password", "-s", Self.keychainService, "-w"]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        // 44 is errSecItemNotFound (not signed in yet); anything else means
+        // the user denied or cancelled the prompt.
+        guard process.terminationStatus == 0 else {
+            if process.terminationStatus != 44 { accessDenied = true }
             return nil
         }
-        guard status == errSecSuccess, let data = item as? Data,
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty
         else { return nil }

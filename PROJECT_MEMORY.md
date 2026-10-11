@@ -26,7 +26,7 @@
   - `seven_day_breakdown.rows[{key, display_name, percent}]` 加 `window_started_at`/`as_of`，就是网页的“This week's usage by product”；
   - 带 `limit_dollars`/`remaining_dollars` 的代号窗口（当前叫 `iguana_necktie`）是“Included credit”。
   - 引擎对这位用户走 CLI 数据源，不请求这个接口，引擎也不输出这些字段。
-- **实现**：`ClaudeAccountUsageClient`（actor）用 `SecItemCopyMatching` 读取钥匙串里 Claude Code 自己的登录凭据（服务名 `Claude Code-credentials`）。只读，token 只发往 api.anthropic.com；5 分钟缓存；token 过期就跳过；用户拒绝钥匙串访问后，本次运行不再询问。首次访问会弹出系统钥匙串授权；ad-hoc 签名每次重新构建后都会再问一次。只有在恰好启用 1 个 Claude 账号时才附加到 dashboard。
+- **实现**：`ClaudeAccountUsageClient`（actor）通过 `/usr/bin/security find-generic-password -s "Claude Code-credentials" -w` 读取钥匙串里 Claude Code 自己的登录凭据。只读，token 只发往 api.anthropic.com；15 分钟缓存；token 过期就跳过；`security` 非 0 且非 44（未找到）时视为用户拒绝，本次运行不再询问。（2026-10-11 由 `SecItemCopyMatching` 改来：Claude Code 刷新 token 会重写该条目、清掉用户“总是允许”的 app，ad-hoc 签名每次重建也会失效，导致反复弹窗；Claude Code 自己就用 `security` 写入，所以它本就受信任。）只有在恰好启用 1 个 Claude 账号时才附加到 dashboard。
 - **展示**：趋势卡片有官方数据时显示官方的 `ClaudeProductBreakdownView`，曲线不再按来源上色；没有官方数据时才退回本机估算。Claude 子菜单显示紧凑的分布条和附赠额度。
 - **概览**：同心双环被用户评价为“low、不清晰”，改为类似 macOS 电池小组件：每个服务商一个独立实色环（按剩余量变色、中性灰底），环中是品牌图标，下方是细字号百分比、名称和倒计时。`UsageRing` 改为实色加中性底，`ConcentricQuotaRings` 已删除。
 - **用户决定（2026-10-09）**：

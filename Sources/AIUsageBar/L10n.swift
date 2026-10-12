@@ -64,6 +64,9 @@ enum L10n {
         return table
     }()
 
+    /// Locale for formatting dates to match the app's language.
+    static var locale: Locale { usesChinese ? Locale(identifier: "zh_Hans_CN") : .current }
+
     static func translate(_ english: String) -> String {
         guard usesChinese else { return english }
         return simplifiedChinese[english] ?? english

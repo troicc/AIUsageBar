@@ -164,6 +164,7 @@ struct ClaudeQuotaHistoryView: View {
 
     private var rangeText: String {
         let formatter = DateFormatter()
+        formatter.locale = L10n.locale
         formatter.setLocalizedDateFormatFromTemplate(isWeekly ? "yMd" : "MdHHmm")
         return "\(formatter.string(from: range.start)) – \(formatter.string(from: range.end))"
     }
@@ -232,23 +233,26 @@ struct ClaudeQuotaHistoryView: View {
         if series.attributedPoints > 0.05 {
             let code = series.claudeCodePoints / series.attributedPoints * 100
             VStack(alignment: .leading, spacing: 6) {
-                GeometryReader { geometry in
-                    HStack(spacing: 2) {
-                        Capsule().fill(QuotaSourceStyle.claudeCode)
-                            .frame(width: max(0, geometry.size.width * CGFloat(code / 100) - 1))
-                        Capsule().fill(QuotaSourceStyle.otherDevices)
+                HStack(spacing: 8) {
+                    GeometryReader { geometry in
+                        HStack(spacing: 2) {
+                            Capsule().fill(QuotaSourceStyle.claudeCode)
+                                .frame(width: max(0, geometry.size.width * CGFloat(code / 100) - 1))
+                            Capsule().fill(QuotaSourceStyle.otherDevices)
+                        }
                     }
+                    .frame(height: 5)
+                    Text(L("Estimated"))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .fixedSize()
                 }
-                .frame(height: 5)
                 HStack(spacing: 14) {
                     legendItem(color: QuotaSourceStyle.claudeCode, title: L("Claude Code"),
                                value: String(format: "%.0f%%", code))
                     legendItem(color: QuotaSourceStyle.otherDevices, title: L("Web & other devices"),
                                value: String(format: "%.0f%%", 100 - code))
-                    Spacer()
-                    Text(L("Estimated"))
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -416,7 +420,7 @@ private struct QuotaHoverReadout: View {
         return VStack(alignment: .leading, spacing: 1) {
             Text(L("%@%% used", value))
                 .font(.system(size: 11, weight: .semibold).monospacedDigit())
-            Text(sample.timestamp.formatted(date: .abbreviated, time: .shortened))
+            Text(sample.timestamp.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(L10n.locale)))
                 .font(.system(size: 9).monospacedDigit())
                 .foregroundColor(.secondary)
         }
@@ -751,10 +755,12 @@ private struct QuotaRecordedStrip: View {
     }
 
     private static func describe(_ span: DateInterval) -> String {
-        let start = span.start.formatted(date: .abbreviated, time: .shortened)
+        let start = span.start.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(L10n.locale))
         guard span.duration > 0 else { return L("Recorded %@", start) }
         let sameDay = Calendar.current.isDate(span.start, inSameDayAs: span.end)
-        return L("Recorded %@ – %@", start, span.end.formatted(date: sameDay ? .omitted : .abbreviated, time: .shortened))
+        let end = span.end.formatted(Date.FormatStyle(date: sameDay ? .omitted : .abbreviated, time: .shortened)
+            .locale(L10n.locale))
+        return L("Recorded %@ – %@", start, end)
     }
 }
 

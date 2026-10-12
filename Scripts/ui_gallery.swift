@@ -4,6 +4,9 @@ import SwiftUI
 /// Renders the app's real views with live provider data from the installed
 /// engine, for design review. Read-only: it never records into the local
 /// history stores. Usage: ui_gallery <output-dir> [en|zh-Hans]
+///
+/// AIUSAGEBAR_GALLERY_DEMO=1 renders for publishing (README screenshots):
+/// account emails become you@example.com and live service status is skipped.
 @main
 enum UIGallery {
     @MainActor
@@ -23,9 +26,10 @@ enum UIGallery {
         let appURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["AIUSAGEBAR_GALLERY_APP"]
             ?? "/Applications/AIUsageBar.app")
         let client = CLIClient(bundle: Bundle(url: appURL) ?? .main)
-        let snapshots: [ProviderSnapshot]
+        let demo = ProcessInfo.processInfo.environment["AIUSAGEBAR_GALLERY_DEMO"] == "1"
+        let fetched: [ProviderSnapshot]
         do {
-            snapshots = try await client.fetchEnabled(status: true)
+            fetched = try await client.fetchEnabled(status: !demo)
         } catch {
             print("FAIL: could not fetch snapshots: \(error.localizedDescription)")
             exit(1)
@@ -42,8 +46,10 @@ enum UIGallery {
         }
         let quotaHistory = ClaudeQuotaHistoryStore(storageDirectory: historyCopy)
         let activeMinutes = await ClaudeCodeActivityLog().activeMinutes()
+        // History is keyed by the real identity, so it is looked up before anonymizing.
+        let snapshots = demo ? fetched.map(anonymized) : fetched
         var dashboards: [String: ProviderDashboard] = [:]
-        for snapshot in snapshots {
+        for (original, snapshot) in zip(fetched, snapshots) {
             let supplement = await client.dashboardSupplementJSON(provider: snapshot.provider)
             var dashboard = DashboardParser.dashboard(snapshot: snapshot, supplementalJSON: supplement)
             if snapshot.provider == "claude" {
@@ -56,7 +62,7 @@ enum UIGallery {
                     dashboard.claudeProductBreakdown = usage.breakdown
                     dashboard.claudeIncludedCredit = usage.includedCredit
                 }
-                dashboard.claudeQuotaHistory = quotaHistory.record(snapshot: snapshot)
+                dashboard.claudeQuotaHistory = quotaHistory.record(snapshot: original)
                     .map { $0.attributed(activeMinutes: activeMinutes, since: Date().addingTimeInterval(-86_400)) }
                 for series in dashboard.claudeQuotaHistory {
                     print(String(format: "%@: %d samples, Claude Code %.1f pts, other %.1f pts",
@@ -81,7 +87,7 @@ enum UIGallery {
             }
             if let claude = snapshots.first(where: { $0.provider == "claude" }), let dashboard = dashboards[claude.id] {
                 for (window, back, pointer) in [("five-hour", 0.0, CGPoint?.none), ("weekly", 0, nil), ("five-hour", 86_400, nil),
-                                                ("five-hour", 0, CGPoint(x: 290, y: 60)), ("weekly", 0, CGPoint(x: 200, y: 60))] {
+                                                ("five-hour", 0, CGPoint(x: 262, y: 60)), ("weekly", 0, CGPoint(x: 226, y: 60))] {
                     let name = "quota-trend-\(window)\(back > 0 ? "-scrolled" : "")\(pointer != nil ? "-hover" : "")-\(mode).png"
                     render(ClaudeQuotaHistoryView(dashboard: dashboard, window: window, scrolledBack: back, pointer: pointer)
                             .padding(16).frame(width: 390)
@@ -124,6 +130,25 @@ enum UIGallery {
         exit(0)
     }
 
+
+    /// The snapshot with every email address replaced by a placeholder.
+    static func anonymized(_ snapshot: ProviderSnapshot) -> ProviderSnapshot {
+        let placeholder = "you@example.com"
+        func scrub(_ text: String) -> String {
+            text.replacingOccurrences(of: "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}", with: placeholder,
+                                      options: [.regularExpression, .caseInsensitive])
+        }
+        guard let raw = snapshot.rawJSON, var copy = try? CLIClient.decodeSnapshots(scrub(raw)).first else { return snapshot }
+        if let status = snapshot.cliAccountStatus {
+            let fields: [String: Any?] = ["loggedIn": status.loggedIn, "authMethod": status.authMethod,
+                                          "apiProvider": status.apiProvider, "email": status.email.map { _ in placeholder },
+                                          "subscriptionType": status.subscriptionType]
+            if let data = try? JSONSerialization.data(withJSONObject: fields.compactMapValues { $0 }) {
+                copy.cliAccountStatus = try? JSONDecoder().decode(ClaudeCLIAccountStatus.self, from: data)
+            }
+        }
+        return copy
+    }
     @MainActor
     static func render<V: View>(_ view: V, appearance: NSAppearance, output: URL) {
         let host = NSHostingView(rootView: view

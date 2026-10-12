@@ -2,6 +2,13 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-12 额度趋势图拼接空缺
+
+- 用户反馈“每周”曲线被 Mac 休眠或应用未运行的空档切成几段，看起来很割裂。
+- `ClaudeQuotaSeries.bridges`：同一窗口（`resetsAt` 相差 ≤300 s，且重置时间晚于后一读数）、用量没有下降的两个读数，不论隔多久都可以拼接。没有 `resetsAt` 的读数不跨空档拼接。`connects` 等于 `bridges` 加上间隔 ≤ `observedGap`（1 h）。
+- 图上空档用虚线直线连接，下方用更淡的面积填充（窗口内用量只增不减，真实曲线必然落在两个读数之间）。`unobservedIntervals` 返回超过 1 h 没有读数的区间，画成浅灰底带；宽度 ≥40pt 且区间内没有重置标记时，顶部标注“未记录”，悬停显示起止时间。跨重置的空档只画底带，不连线。
+- 画廊现在同时渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`（`ClaudeQuotaHistoryView(window:)`）。
+
 ## 2026-10-09 额度重置动画
 
 - **判定**：`ProviderSnapshot.quotaDidReset(from:to:)` 按 `windowMinutes` 对齐窗口。`resetsAt` 前移超过 10 分钟且用量下降至少 5 点算重置；没有 `resetsAt` 时用量下降至少 25 点也算。有回归测试（在 `quota_trend_store_regression.swift`）。

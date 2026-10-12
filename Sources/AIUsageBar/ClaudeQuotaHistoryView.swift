@@ -14,13 +14,14 @@ struct ClaudeQuotaCoverageView: View {
 
 struct ClaudeQuotaHistoryView: View {
     let dashboard: ProviderDashboard
-    @State private var selected = "five-hour"
+    @State private var selected: String
     let now: Date
 
     /// `expanded` is kept for callers; the trend is always shown now.
-    init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date()) {
+    init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour") {
         self.dashboard = dashboard
         self.now = now
+        _selected = State(initialValue: window)
     }
 
     private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
@@ -206,7 +207,9 @@ private struct QuotaWindowSwitch: View {
 }
 
 /// Smooth quota curve over the last 24 hours. Segments are colored by the
-/// estimated source of the rise; breaks mark resets, decreases and gaps.
+/// estimated source of the rise; breaks mark resets and decreases. Intervals
+/// with no readings are shaded, and when the window did not change across
+/// one, a dashed line joins the readings on either side.
 private struct ClaudeQuotaPlot: View {
     let series: ClaudeQuotaSeries
     let now: Date
@@ -251,7 +254,11 @@ private struct ClaudeQuotaPlot: View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 grid(geometry.size)
+                unobservedBands(geometry.size)
                 resetMarkers(geometry.size)
+                ForEach(bridges, id: \.self) { index in
+                    bridgeView(from: series.samples[index - 1], to: series.samples[index], size: geometry.size)
+                }
                 ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
                     runView(run, size: geometry.size)
                 }
@@ -282,6 +289,62 @@ private struct ClaudeQuotaPlot: View {
                 .foregroundColor(.secondary)
                 .position(x: size.width - 12, y: y(percent, size))
         }
+    }
+
+    private var start: Date { now.addingTimeInterval(-86_400) }
+
+    /// Indices of samples that start a run but continue the previous one's window.
+    private var bridges: [Int] {
+        series.samples.indices.dropFirst().filter { index in
+            let previous = series.samples[index - 1], sample = series.samples[index]
+            return !ClaudeQuotaSeries.connects(previous, sample) && ClaudeQuotaSeries.bridges(previous, sample)
+        }
+    }
+
+    @ViewBuilder
+    private func unobservedBands(_ size: CGSize) -> some View {
+        ForEach(series.unobservedIntervals(from: start, to: now), id: \.self) { interval in
+            let left = x(interval.start, size: size), right = x(interval.end, size: size)
+            let hasReset = resetIndices.contains { (left...right).contains(x(series.windowStart(at: $0), size: size)) }
+            ZStack {
+                Rectangle().fill(Color.primary.opacity(0.045))
+                if right - left >= 40 && !hasReset {
+                    Text(L("Not recorded"))
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(.secondary)
+                        .position(x: (right - left) / 2, y: 4)
+                }
+            }
+            .frame(width: max(0, right - left), height: max(0, size.height - 6))
+            .position(x: (left + right) / 2, y: (size.height - 6) / 2)
+            .help(L("%@ – %@: no readings (Mac asleep or the app not running).",
+                    interval.start.formatted(date: .omitted, time: .shortened),
+                    interval.end.formatted(date: .omitted, time: .shortened)))
+        }
+    }
+
+    /// Straight dashed line across an unobserved interval in one window, with
+    /// a fainter area under it. Usage only rises within a window, so the real
+    /// curve lies between the two readings.
+    @ViewBuilder
+    private func bridgeView(from previous: ClaudeQuotaSample, to next: ClaudeQuotaSample, size: CGSize) -> some View {
+        let a = point(previous, size: size), b = point(next, size: size)
+        Path { path in
+            path.move(to: CGPoint(x: a.x, y: size.height - 6))
+            path.addLine(to: a)
+            path.addLine(to: b)
+            path.addLine(to: CGPoint(x: b.x, y: size.height - 6))
+            path.closeSubpath()
+        }
+        .fill(LinearGradient(colors: [QuotaSourceStyle.claudeCode.opacity(0.10),
+                                      QuotaSourceStyle.claudeCode.opacity(0.0)],
+                             startPoint: .top, endPoint: .bottom))
+        Path { path in
+            path.move(to: a)
+            path.addLine(to: b)
+        }
+        .stroke(QuotaSourceStyle.claudeCode.opacity(0.7),
+                style: StrokeStyle(lineWidth: 1.4, lineCap: .round, dash: [3, 3]))
     }
 
     private var resetIndices: [Int] {

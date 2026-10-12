@@ -80,9 +80,11 @@ enum UIGallery {
                        appearance: appearance, output: output.appendingPathComponent("detail-\(snapshot.provider)-\(mode).png"))
             }
             if let claude = snapshots.first(where: { $0.provider == "claude" }), let dashboard = dashboards[claude.id] {
-                render(ClaudeQuotaHistoryView(dashboard: dashboard).padding(16).frame(width: 390)
-                        .background(Color(nsColor: .windowBackgroundColor)),
-                       appearance: appearance, output: output.appendingPathComponent("quota-trend-\(mode).png"))
+                for window in ["five-hour", "weekly"] {
+                    render(ClaudeQuotaHistoryView(dashboard: dashboard, window: window).padding(16).frame(width: 390)
+                            .background(Color(nsColor: .windowBackgroundColor)),
+                           appearance: appearance, output: output.appendingPathComponent("quota-trend-\(window)-\(mode).png"))
+                }
             }
             let entries = snapshots.map { AllProviderEntry(id: $0.id, dashboard: dashboards[$0.id] ?? DashboardParser.dashboard(snapshot: $0)) }
             render(AllProvidersContentView(entries: entries, isRefreshing: false, error: nil, refresh: {}, openSettings: {})

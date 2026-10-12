@@ -16,6 +16,8 @@ extension L10nTable {
         "Estimated": "估算",
         "No quota change to attribute in the last 24 hours.": "近 24 小时没有可归因的额度变化。",
         "Reset": "重置",
+        "Not recorded": "未记录",
+        "%@ – %@: no readings (Mac asleep or the app not running).": "%@ – %@ 没有读数（Mac 休眠或应用未运行）。",
         "This week by product": "本周按产品用量",
         "Chats": "聊天",
         "Other": "其他",

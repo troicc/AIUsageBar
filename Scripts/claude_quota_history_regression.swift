@@ -54,6 +54,27 @@ struct ClaudeQuotaHistoryRegression {
             ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end),
             ClaudeQuotaSample(timestamp: end, usedPercent: 40, resetsAt: end),
         ] { precondition(!ClaudeQuotaSeries.connects(before, after), "reset/decrease/missing interval must break chart") }
+        // A long unobserved interval inside one window is bridged (dashed);
+        // resets, corrections and windows that ended in the gap are not.
+        precondition(ClaudeQuotaSeries.bridges(before, ClaudeQuotaSample(
+            timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end)), "same window bridges a gap")
+        for after in [
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 1, resetsAt: end),
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end.addingTimeInterval(3600)),
+            ClaudeQuotaSample(timestamp: end, usedPercent: 40, resetsAt: end),
+        ] { precondition(!ClaudeQuotaSeries.bridges(before, after), "reset/decrease must not be bridged") }
+        let noReset = ClaudeQuotaSample(timestamp: secondTime, usedPercent: 10, resetsAt: nil)
+        precondition(!ClaudeQuotaSeries.bridges(noReset, ClaudeQuotaSample(
+            timestamp: secondTime.addingTimeInterval(4000), usedPercent: 12, resetsAt: nil)), "unknown window is never bridged")
+        let gapSeries = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(7200), usedPercent: 50, resetsAt: end),
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(9000), usedPercent: 51, resetsAt: end),
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(20000), usedPercent: 55, resetsAt: end),
+        ])
+        precondition(gapSeries.unobservedIntervals(from: secondTime, to: secondTime.addingTimeInterval(20600)) == [
+            DateInterval(start: secondTime, end: secondTime.addingTimeInterval(7200)),
+            DateInterval(start: secondTime.addingTimeInterval(9000), end: secondTime.addingTimeInterval(20000)),
+        ], "leading and inner gaps are marked; short tails are not")
         precondition(reloaded.record(snapshot: second, now: start.addingTimeInterval(90000)).isEmpty, "24h display excludes stale observations")
         // Corrupt storage must remain recoverable, not overwritten by new observations.
         try Data("broken".utf8).write(to: file)

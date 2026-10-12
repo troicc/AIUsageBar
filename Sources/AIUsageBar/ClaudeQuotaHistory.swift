@@ -73,13 +73,36 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
         return result
     }
 
+    /// Longest interval between two readings that still counts as observed.
+    static let observedGap: TimeInterval = 3600
+
     /// Do not draw consumption through resets, corrections or an unobserved interval.
     static func connects(_ previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Bool {
-        next.timestamp > previous.timestamp &&
-            next.timestamp.timeIntervalSince(previous.timestamp) <= 3600 &&
-            sameWindow(previous.resetsAt, next.resetsAt) &&
-            !(previous.resetsAt.map { $0 <= next.timestamp } ?? false) &&
+        next.timestamp.timeIntervalSince(previous.timestamp) <= observedGap && bridges(previous, next)
+    }
+
+    /// Readings in the same window with no reset or correction between them,
+    /// however far apart. Across an unobserved interval (the Mac asleep or the
+    /// app not running) the chart joins them with a dashed line: usage only
+    /// rises within a window, so the gap is bounded by the two readings.
+    static func bridges(_ previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Bool {
+        guard let resetsAt = previous.resetsAt else {
+            return next.resetsAt == nil && next.timestamp > previous.timestamp &&
+                next.timestamp.timeIntervalSince(previous.timestamp) <= observedGap &&
+                next.usedPercent >= previous.usedPercent
+        }
+        return next.timestamp > previous.timestamp &&
+            sameWindow(resetsAt, next.resetsAt) &&
+            resetsAt > next.timestamp &&
             next.usedPercent >= previous.usedPercent
+    }
+
+    /// Stretches of `start...end` with no reading for longer than `observedGap`.
+    func unobservedIntervals(from start: Date, to end: Date) -> [DateInterval] {
+        let times = [start] + samples.map(\.timestamp).filter { $0 > start && $0 < end } + [end]
+        return zip(times, times.dropFirst()).compactMap { from, to in
+            to.timeIntervalSince(from) > Self.observedGap ? DateInterval(start: from, end: to) : nil
+        }
     }
 
     /// The server reports a window's reset time with a few seconds of drift

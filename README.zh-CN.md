@@ -1,12 +1,79 @@
 # AIUsageBar
 
+<p align="center"><a href="README.md">English</a> · 简体中文</p>
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/menu-overview-dark.png"><img src="docs/screenshots/zh/menu-overview-light.png" alt="AIUsageBar 菜单：Claude、z.ai 和 DeepSeek 的额度环" width="388"></picture>
+</p>
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/status-items-dark.png"><img src="docs/screenshots/zh/status-items-light.png" alt="菜单栏额度环：100%、72%、41%、18%、9%" width="560"></picture>
+</p>
+
+<p align="center"><b>所有 AI 额度、重置时间和花费，菜单栏一眼看清。</b><br>
+面向 macOS 12 Monterey 及更新系统的原生菜单栏应用，内置 CodexBar 完整 provider 引擎。</p>
+
+## 界面一览
+
+### 额度一眼看清
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/menu-claude-dark.png"><img src="docs/screenshots/zh/menu-claude-light.png" alt="Claude 子菜单：额度环、各窗口、Token 与费用" width="388"></picture>
+</p>
+
+- **每个服务商一个环**，类似电池小组件：颜色随剩余量变化，环中是品牌图标，下方是重置倒计时；剩余最少的排在最前。
+- **菜单栏额度环**，剩余低于 15% 变红；也可以改为显示已用或剩余百分比，或服务商图标。
+- **用量节奏预测**（「17小时47分后用尽」「进度正常」）；额度重置时还有一段小动画：环重新填满，然后发光。
+
+### 看得懂的额度趋势
+
+<table>
+<tr>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/quota-trend-weekly-hover-dark.png"><img src="docs/screenshots/zh/quota-trend-weekly-hover-light.png" alt="每周额度趋势：整个订阅周期，悬停显示读数" width="390"></picture></td>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/quota-trend-five-hour-hover-dark.png"><img src="docs/screenshots/zh/quota-trend-five-hour-hover-light.png" alt="5 小时额度趋势：近 24 小时，悬停显示读数" width="390"></picture></td>
+</tr>
+</table>
+
+- **整个订阅月一条连续曲线**。Mac 休眠期间的空档用灰线连接，每次重置都在准确的时间点落下。
+- **鼠标悬停任意位置**，蓝点吸附到真实读数，显示当时用了多少额度、读数时间。
+- **左右滑动、拖动或按 ‹ ›** 回看历史，历史**永久保存**（每天约 15 KB）；曲线下方的色条标出每一段有记录的时间。
+- **额度花在哪**：账号提供时显示 Claude 官方按产品占比（Claude Code、Cowork、聊天）；否则根据本机活动估算 Claude Code 与网页/其他设备的占比。
+
+### 单个服务商详情，或全部一起看
+
+<table>
+<tr>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/detail-claude-dark.png"><img src="docs/screenshots/zh/detail-claude-light.png" alt="Claude 详情弹窗：额度环与趋势" width="390"></picture></td>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/all-providers-dark.png"><img src="docs/screenshots/zh/all-providers-light.png" alt="全部服务商总览" width="620"></picture></td>
+</tr>
+</table>
+
+### 永不清理的用量数据
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/settings-usage-data-dark.png"><img src="docs/screenshots/zh/settings-usage-data-light.png" alt="用量数据设置页：Token 历史、模型与服务商分布" width="980"></picture>
+
+- 本地 Token 账本**从不自动清理**：从 24 小时到全部历史，按模型和服务商拆分，可导出 CSV 和完整 JSON。
+- 按 API 价格估算费用；未知价格留空而不是画成 0，部分估算标注 `≥`。
+
+### 60+ 服务商，几步配置完成
+
+<table>
+<tr>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/settings-providers-dark.png"><img src="docs/screenshots/zh/settings-providers-light.png" alt="服务商设置：官方 Logo 与配置步骤" width="490"></picture></td>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/zh/settings-menu-bar-dark.png"><img src="docs/screenshots/zh/settings-menu-bar-light.png" alt="菜单栏设置：实时预览" width="490"></picture></td>
+</tr>
+</table>
+
+- 上游引擎注册的全部服务商，带官方 Logo、分步认证说明；选择菜单栏样式时可实时预览。
+
+<sub>截图由应用自身的界面配合真实用量数据渲染，账号信息已替换为占位内容。</sub>
+
+## 交付范围
+
 > 本项目已改名为 AIUsageBar。首次启动时，应用会把改名前安装留下的设置、用量历史、provider 配置文件和开机启动项自动迁移过来。
 
 AIUsageBar 是面向 **macOS 12 Monterey** 的 AI 用量 / 额度 / 花费菜单栏应用。它内置上游开源项目 [CodexBar](https://github.com/steipete/CodexBar)（MIT）的完整 provider 数据引擎，并采用整包更新架构，UI 层为 Monterey 原生重写。安全自动更新是否可用仍取决于实际签名、密钥和 appcast 配置。
 
 当前固定的上游引擎版本见 `ENGINE_VERSION`。构建时会拉取该 tag 的 `CodexBarCore + CodexBarCLI`，因此 provider 列表、抓取器、解析器、认证来源、状态探针和配置结构都由上游维护，而不是在本项目里手工复制一份 provider 清单。
-
-## 交付范围
 
 ### 保留
 

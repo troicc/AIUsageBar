@@ -1,5 +1,74 @@
 # AIUsageBar
 
+<p align="center">English · <a href="README.zh-CN.md">简体中文</a></p>
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/menu-overview-dark.png"><img src="docs/screenshots/en/menu-overview-light.png" alt="AIUsageBar menu: quota rings for Claude, z.ai and DeepSeek" width="388"></picture>
+</p>
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/status-items-dark.png"><img src="docs/screenshots/en/status-items-light.png" alt="Menu-bar quota rings at 100%, 72%, 41%, 18% and 9%" width="560"></picture>
+</p>
+
+<p align="center"><b>Every AI quota, reset and dollar — one glance from the menu bar.</b><br>
+A native menu-bar app for macOS 12 Monterey and later, powered by the full CodexBar provider engine.</p>
+
+## Highlights
+
+### Your quotas, at a glance
+
+<p align="center">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/menu-claude-dark.png"><img src="docs/screenshots/en/menu-claude-light.png" alt="Claude submenu with quota ring, windows, tokens and cost" width="388"></picture>
+</p>
+
+- **A ring per provider**, like the battery widget: colored by how much is left, with the brand logo inside and the reset countdown underneath. Rows sort with the scarcest quota first.
+- **Menu-bar ring** that turns red below 15% — or show the used or remaining percentage, or the provider icon.
+- **Pace forecasts** ("Runs out in 17h 47m", "On pace") for every window, and a little celebration when a quota resets: the ring refills, then glows.
+
+### A quota trend you can actually read
+
+<table>
+<tr>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/quota-trend-weekly-hover-dark.png"><img src="docs/screenshots/en/quota-trend-weekly-hover-light.png" alt="Weekly quota trend across the billing cycle with hover readout" width="390"></picture></td>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/quota-trend-five-hour-hover-dark.png"><img src="docs/screenshots/en/quota-trend-five-hour-hover-light.png" alt="Five-hour quota trend over 24 hours with hover readout" width="390"></picture></td>
+</tr>
+</table>
+
+- **One continuous line** across the whole subscription month. Stretches the Mac slept through are joined in gray, and every reset drops at its exact time.
+- **Hover anywhere** for a blue dot snapped to the real reading, with the usage and when it was read.
+- **Swipe, drag or step** back through history that is **kept forever** (about 15 KB a day). The strip under the curve marks exactly when readings were recorded.
+- **Where the quota went:** Claude's official per-product breakdown (Claude Code, Cowork, chats) when your account reports it, or an estimate of Claude Code versus web and other devices from local activity.
+
+### Details for one provider, or all of them
+
+<table>
+<tr>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/detail-claude-dark.png"><img src="docs/screenshots/en/detail-claude-light.png" alt="Claude detail popover with quota rings and trend" width="390"></picture></td>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/all-providers-dark.png"><img src="docs/screenshots/en/all-providers-light.png" alt="All providers overview" width="620"></picture></td>
+</tr>
+</table>
+
+### Usage data that never disappears
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/settings-usage-data-dark.png"><img src="docs/screenshots/en/settings-usage-data-light.png" alt="Usage Data settings with token history, models and providers" width="980"></picture>
+
+- A local token ledger that is **never pruned**: 24 hours to all time, by model and by provider, with CSV and full JSON export.
+- Cost estimates at API prices, with unknown prices left as gaps rather than drawn as zero; partial totals are marked `≥`.
+
+### 60+ providers, set up in a few clicks
+
+<table>
+<tr>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/settings-providers-dark.png"><img src="docs/screenshots/en/settings-providers-light.png" alt="Providers settings with official logos and setup steps" width="490"></picture></td>
+<td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/en/settings-menu-bar-dark.png"><img src="docs/screenshots/en/settings-menu-bar-light.png" alt="Menu Bar settings with a live preview" width="490"></picture></td>
+</tr>
+</table>
+
+- Every provider the upstream engine registers, with official logos, step-by-step authentication guidance, and a live preview of the menu bar while you choose its style.
+
+<sub>Screenshots are rendered from the app's own views with real usage data; account details are replaced with placeholders.</sub>
+
+## What's included
+
 > Renamed from an earlier project name. On first launch the app moves settings, usage history, the provider config file and the launch-at-login agent from installs made before the rename.
 
 A macOS 12 menu-bar app for AI usage, quotas and spend. It bundles the complete provider engine from the upstream [CodexBar](https://github.com/steipete/CodexBar) project (MIT) and ships as a Sparkle-ready whole bundle.

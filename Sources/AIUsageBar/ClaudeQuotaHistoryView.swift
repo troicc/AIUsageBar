@@ -26,15 +26,37 @@ struct ClaudeQuotaHistoryView: View {
 
     private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
 
-    private var series: ClaudeQuotaSeries? {
+    private var lane: ClaudeQuotaSeries? {
         dashboard.claudeQuotaHistory.first { $0.id == selected } ?? dashboard.claudeQuotaHistory.first
     }
+
+    private var isWeekly: Bool { lane?.id == "weekly" }
+
+    /// Renewal or expiry date, from the account or entered in the subscription card.
+    private var subscriptionDate: Date? {
+        let manual = dashboard.subscriptionDatePreferenceKey.flatMap { UserDefaults.standard.string(forKey: $0) } ?? ""
+        return SubscriptionTiming.resolve(expires: dashboard.subscriptionExpiresAt,
+                                          renews: dashboard.subscriptionRenewsAt, manual: manual)?.date
+    }
+
+    /// The weekly lane spans the current subscription month; the 5-hour lane the last day.
+    private var range: DateInterval {
+        isWeekly ? ClaudeQuotaSeries.billingCycle(now: now, anchor: subscriptionDate)
+            : DateInterval(start: now.addingTimeInterval(-86_400), end: now)
+    }
+
+    private var title: String {
+        guard isWeekly else { return L("Quota trend · 24h") }
+        return subscriptionDate != nil ? L("Quota trend · this billing cycle") : L("Quota trend · 30 days")
+    }
+
+    private var series: ClaudeQuotaSeries? { lane?.within(range) }
 
     var body: some View {
         DSCard(padding: 14) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .center) {
-                    Label(L("Quota trend · 24h"), systemImage: "chart.xyaxis.line")
+                    Label(title, systemImage: "chart.xyaxis.line")
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
                     if dashboard.claudeQuotaHistory.count > 1 {
@@ -43,11 +65,7 @@ struct ClaudeQuotaHistoryView: View {
                 }
                 if let series = series, let last = series.samples.last {
                     summary(series, last: last)
-                    // Per-segment source coloring is an estimate; when the
-                    // account reports the official breakdown, show that instead.
-                    ClaudeQuotaPlot(series: series, now: now, showsSources: official == nil)
-                        .frame(height: 128)
-                    timeAxis
+                    chart(series)
                     if official == nil { legend(series) }
                 } else {
                     Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
@@ -69,6 +87,23 @@ struct ClaudeQuotaHistoryView: View {
                     Text(notice).font(.system(size: 10)).foregroundColor(.secondary)
                 }
             }
+        }
+    }
+
+    /// Curve, the strip of recorded stretches under it, and the time axis.
+    private func chart(_ series: ClaudeQuotaSeries) -> some View {
+        let scale = QuotaTrendScale(range: range)
+        let longGap = ClaudeQuotaSeries.longGap(over: range)
+        let spans = series.recordedSpans(maxGap: longGap)
+        return VStack(alignment: .leading, spacing: 4) {
+            // Per-segment source coloring is an estimate; when the
+            // account reports the official breakdown, show that instead.
+            ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
+                            longGap: longGap, showsSources: official == nil)
+                .frame(height: 128)
+            QuotaRecordedStrip(spans: spans, scale: scale)
+            QuotaTimeAxis(scale: scale, now: now, daily: isWeekly)
+            if spans.count > 1 { QuotaTrendKey().padding(.top, 2) }
         }
     }
 
@@ -97,35 +132,6 @@ struct ClaudeQuotaHistoryView: View {
             }
             Text(caption).font(.system(size: 10)).foregroundColor(.secondary)
         }
-    }
-
-    /// Labels at whole local hours (every 6 h), placed where they fall.
-    /// Ticks too close to "Now" or the left edge are dropped so labels never overlap.
-    private var timeAxis: some View {
-        GeometryReader { geometry in
-            let start = now.addingTimeInterval(-86_400)
-            let calendar = Calendar.current
-            let firstHour = calendar.nextDate(after: start, matching: DateComponents(minute: 0),
-                                              matchingPolicy: .nextTime) ?? start
-            let plotWidth = max(0, geometry.size.width - 32)
-            let ticks = (0..<24).compactMap { offset -> (date: Date, x: CGFloat)? in
-                let date = firstHour.addingTimeInterval(Double(offset) * 3600)
-                let x = 4 + CGFloat(date.timeIntervalSince(start) / 86_400) * plotWidth
-                guard calendar.component(.hour, from: date) % 6 == 0,
-                      x >= 14, x <= 4 + plotWidth - 30 else { return nil }
-                return (date, x)
-            }
-            ZStack(alignment: .topLeading) {
-                ForEach(ticks, id: \.date) { tick in
-                    Text(Self.hourFormatter.string(from: tick.date))
-                        .position(x: tick.x, y: 6)
-                }
-                Text(L("Now")).position(x: 4 + plotWidth, y: 6)
-            }
-        }
-        .frame(height: 12)
-        .font(.system(size: 9).monospacedDigit())
-        .foregroundColor(.secondary)
     }
 
     @ViewBuilder
@@ -167,11 +173,6 @@ struct ClaudeQuotaHistoryView: View {
         }
     }
 
-    private static let hourFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:00"
-        return formatter
-    }()
 }
 
 enum QuotaSourceStyle {
@@ -206,23 +207,43 @@ private struct QuotaWindowSwitch: View {
     }
 }
 
-/// Smooth quota curve over the last 24 hours. Segments are colored by the
-/// estimated source of the rise; breaks mark resets and decreases. Intervals
-/// with no readings are shaded, and when the window did not change across
-/// one, a dashed line joins the readings on either side.
+/// Maps dates in a trend's range to x positions. The right 28 pt hold the
+/// percent labels.
+struct QuotaTrendScale {
+    let range: DateInterval
+
+    func x(_ date: Date, width: CGFloat) -> CGFloat {
+        let fraction = range.duration > 0 ? date.timeIntervalSince(range.start) / range.duration : 1
+        return 4 + CGFloat(max(0, min(1, fraction))) * max(0, width - 32)
+    }
+}
+
+enum QuotaTrendStyle {
+    /// Joins readings across a long stretch with none: the Mac asleep or the app not running.
+    static let unrecorded = Color.secondary.opacity(0.55)
+}
+
+/// Quota curve over the trend's range, drawn as one continuous line.
+/// Observed stretches are smooth Catmull-Rom curves colored by the estimated
+/// source of each rise. Between them a straight connector joins the readings:
+/// in the brand color after a short gap, gray after a long one (`longGap`). When a
+/// window reset in between, the connector holds the last reading until the
+/// reset, drops to zero, then rises to the next reading.
 private struct ClaudeQuotaPlot: View {
     let series: ClaudeQuotaSeries
+    let scale: QuotaTrendScale
     let now: Date
+    let longGap: TimeInterval
     var showsSources = true
 
-    private func x(_ date: Date, size: CGSize) -> CGFloat {
-        let fraction = max(0, min(1, date.timeIntervalSince(now.addingTimeInterval(-86400)) / 86400))
-        return 4 + fraction * max(0, size.width - 32)
+    private func x(_ date: Date, size: CGSize) -> CGFloat { scale.x(date, width: size.width) }
+
+    private func y(_ percent: Double, _ size: CGSize) -> CGFloat {
+        6 + CGFloat(1 - percent / 100) * (size.height - 12)
     }
 
     private func point(_ sample: ClaudeQuotaSample, size: CGSize) -> CGPoint {
-        CGPoint(x: x(sample.timestamp, size: size),
-                y: 6 + (1 - sample.usedPercent / 100) * max(0, size.height - 12))
+        CGPoint(x: x(sample.timestamp, size: size), y: y(sample.usedPercent, size))
     }
 
     /// Indices of samples grouped into connected runs.
@@ -238,9 +259,16 @@ private struct ClaudeQuotaPlot: View {
         return result
     }
 
+    /// Indices of samples that start a run, joined to the previous run by a connector.
+    private var connectors: [Int] {
+        series.samples.indices.dropFirst().filter {
+            !ClaudeQuotaSeries.connects(series.samples[$0 - 1], series.samples[$0])
+        }
+    }
+
     /// Catmull-Rom control points for the segment from `i` to `i + 1` of a run,
     /// clamped vertically so the curve never overshoots the plot.
-    private func controls(_ run: [CGPoint], _ i: Int, height: CGFloat) -> (CGPoint, CGPoint) {
+    private func controls(_ run: [CGPoint], _ i: Int) -> (CGPoint, CGPoint) {
         let p0 = run[max(0, i - 1)], p1 = run[i], p2 = run[i + 1], p3 = run[min(run.count - 1, i + 2)]
         func clamp(_ p: CGPoint) -> CGPoint {
             CGPoint(x: p.x, y: min(max(p.y, min(p1.y, p2.y)), max(p1.y, p2.y)))
@@ -254,10 +282,11 @@ private struct ClaudeQuotaPlot: View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 grid(geometry.size)
-                unobservedBands(geometry.size)
+                nowMarker(geometry.size)
                 resetMarkers(geometry.size)
-                ForEach(bridges, id: \.self) { index in
-                    bridgeView(from: series.samples[index - 1], to: series.samples[index], size: geometry.size)
+                area(geometry.size).fill(fill)
+                ForEach(connectors, id: \.self) { index in
+                    connectorView(index, size: geometry.size)
                 }
                 ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
                     runView(run, size: geometry.size)
@@ -267,12 +296,8 @@ private struct ClaudeQuotaPlot: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(L("%@ shared quota trend, 0 to 100 percent, last 24 hours", series.title)))
+        .accessibilityLabel(Text(L("%@ shared quota trend, 0 to 100 percent", series.title)))
         .accessibilityValue(Text(L("%d observations", series.samples.count)))
-    }
-
-    private func y(_ percent: Double, _ size: CGSize) -> CGFloat {
-        6 + CGFloat(1 - percent / 100) * (size.height - 12)
     }
 
     @ViewBuilder
@@ -291,73 +316,33 @@ private struct ClaudeQuotaPlot: View {
         }
     }
 
-    private var start: Date { now.addingTimeInterval(-86_400) }
-
-    /// Indices of samples that start a run but continue the previous one's window.
-    private var bridges: [Int] {
-        series.samples.indices.dropFirst().filter { index in
-            let previous = series.samples[index - 1], sample = series.samples[index]
-            return !ClaudeQuotaSeries.connects(previous, sample) && ClaudeQuotaSeries.bridges(previous, sample)
-        }
-    }
-
+    /// Where "now" falls when the range runs on to the end of the billing cycle.
     @ViewBuilder
-    private func unobservedBands(_ size: CGSize) -> some View {
-        ForEach(series.unobservedIntervals(from: start, to: now), id: \.self) { interval in
-            let left = x(interval.start, size: size), right = x(interval.end, size: size)
-            let hasReset = resetIndices.contains { (left...right).contains(x(series.windowStart(at: $0), size: size)) }
-            ZStack {
-                Rectangle().fill(Color.primary.opacity(0.045))
-                if right - left >= 40 && !hasReset {
-                    Text(L("Not recorded"))
-                        .font(.system(size: 8, weight: .medium))
-                        .foregroundColor(.secondary)
-                        .position(x: (right - left) / 2, y: 4)
-                }
+    private func nowMarker(_ size: CGSize) -> some View {
+        let nowX = x(now, size: size)
+        if x(scale.range.end, size: size) - nowX >= 3 {
+            Path { path in
+                path.move(to: CGPoint(x: nowX, y: 0))
+                path.addLine(to: CGPoint(x: nowX, y: size.height - 6))
             }
-            .frame(width: max(0, right - left), height: max(0, size.height - 6))
-            .position(x: (left + right) / 2, y: (size.height - 6) / 2)
-            .help(L("%@ – %@: no readings (Mac asleep or the app not running).",
-                    interval.start.formatted(date: .omitted, time: .shortened),
-                    interval.end.formatted(date: .omitted, time: .shortened)))
+            .stroke(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
         }
-    }
-
-    /// Straight dashed line across an unobserved interval in one window, with
-    /// a fainter area under it. Usage only rises within a window, so the real
-    /// curve lies between the two readings.
-    @ViewBuilder
-    private func bridgeView(from previous: ClaudeQuotaSample, to next: ClaudeQuotaSample, size: CGSize) -> some View {
-        let a = point(previous, size: size), b = point(next, size: size)
-        Path { path in
-            path.move(to: CGPoint(x: a.x, y: size.height - 6))
-            path.addLine(to: a)
-            path.addLine(to: b)
-            path.addLine(to: CGPoint(x: b.x, y: size.height - 6))
-            path.closeSubpath()
-        }
-        .fill(LinearGradient(colors: [QuotaSourceStyle.claudeCode.opacity(0.10),
-                                      QuotaSourceStyle.claudeCode.opacity(0.0)],
-                             startPoint: .top, endPoint: .bottom))
-        Path { path in
-            path.move(to: a)
-            path.addLine(to: b)
-        }
-        .stroke(QuotaSourceStyle.claudeCode.opacity(0.7),
-                style: StrokeStyle(lineWidth: 1.4, lineCap: .round, dash: [3, 3]))
     }
 
     private var resetIndices: [Int] {
         series.samples.indices.dropFirst().filter { index in
             let previous = series.samples[index - 1], sample = series.samples[index]
-            return previous.resetsAt != sample.resetsAt && sample.usedPercent < previous.usedPercent
+            return !ClaudeQuotaSeries.sameWindow(previous.resetsAt, sample.resetsAt) && sample.usedPercent < previous.usedPercent
         }
     }
 
     @ViewBuilder
     private func resetMarkers(_ size: CGSize) -> some View {
         ForEach(resetIndices, id: \.self) { index in
-            let markerX = x(series.windowStart(at: index), size: size)
+            // The old window's reset time when known (where the line drops),
+            // otherwise the new window's start.
+            let reset = ClaudeQuotaSeries.reset(between: series.samples[index - 1], series.samples[index])
+            let markerX = x(reset ?? series.windowStart(at: index), size: size)
             Path { path in
                 path.move(to: CGPoint(x: markerX, y: 0))
                 path.addLine(to: CGPoint(x: markerX, y: size.height))
@@ -366,31 +351,73 @@ private struct ClaudeQuotaPlot: View {
             Text(L("Reset"))
                 .font(.system(size: 8, weight: .medium))
                 .foregroundColor(.secondary)
-                .position(x: markerX, y: 4)
+                .fixedSize()
+                .position(x: min(markerX, size.width - 46), y: 4)
         }
     }
 
-    private func areaPath(_ points: [CGPoint], size: CGSize) -> Path {
+    /// Area under the whole line (runs and connectors) as one path, so the
+    /// fill has no seams where pieces meet.
+    private func area(_ size: CGSize) -> Path {
         Path { path in
-            path.move(to: CGPoint(x: points[0].x, y: size.height - 6))
-            path.addLine(to: points[0])
-            for i in 0..<(points.count - 1) {
-                let (c1, c2) = controls(points, i, height: size.height)
-                path.addCurve(to: points[i + 1], control1: c1, control2: c2)
+            let baseline = size.height - 6
+            var lastX: CGFloat?
+            for (offset, run) in runs.enumerated() {
+                let points = run.map { point(series.samples[$0], size: size) }
+                if offset == 0 {
+                    path.move(to: CGPoint(x: points[0].x, y: baseline))
+                    path.addLine(to: points[0])
+                } else {
+                    connectorPoints(run[0], size: size).dropFirst().forEach { path.addLine(to: $0) }
+                }
+                if points.count > 1 { addLine(points, smooth: true, to: &path) }
+                lastX = points.last?.x
             }
-            path.addLine(to: CGPoint(x: points[points.count - 1].x, y: size.height - 6))
-            path.closeSubpath()
+            if let lastX = lastX {
+                path.addLine(to: CGPoint(x: lastX, y: baseline))
+                path.closeSubpath()
+            }
         }
     }
 
-    private func linePath(_ points: [CGPoint], size: CGSize) -> Path {
+    private func line(_ points: [CGPoint], smooth: Bool) -> Path {
         Path { path in
             path.move(to: points[0])
-            for i in 0..<(points.count - 1) {
-                let (c1, c2) = controls(points, i, height: size.height)
+            addLine(points, smooth: smooth, to: &path)
+        }
+    }
+
+    private func addLine(_ points: [CGPoint], smooth: Bool, to path: inout Path) {
+        for i in 0..<(points.count - 1) {
+            if smooth {
+                let (c1, c2) = controls(points, i)
                 path.addCurve(to: points[i + 1], control1: c1, control2: c2)
+            } else {
+                path.addLine(to: points[i + 1])
             }
         }
+    }
+
+    private var fill: LinearGradient {
+        LinearGradient(colors: [QuotaSourceStyle.claudeCode.opacity(0.22), QuotaSourceStyle.claudeCode.opacity(0.0)],
+                       startPoint: .top, endPoint: .bottom)
+    }
+
+    private func connectorPoints(_ index: Int, size: CGSize) -> [CGPoint] {
+        let previous = series.samples[index - 1], next = series.samples[index]
+        let a = point(previous, size: size), b = point(next, size: size)
+        guard let reset = ClaudeQuotaSeries.reset(between: previous, next) else { return [a, b] }
+        let resetX = x(reset, size: size)
+        return [a, CGPoint(x: resetX, y: a.y), CGPoint(x: resetX, y: y(0, size)), b]
+    }
+
+    @ViewBuilder
+    private func connectorView(_ index: Int, size: CGSize) -> some View {
+        let points = connectorPoints(index, size: size)
+        let gap = series.samples[index].timestamp.timeIntervalSince(series.samples[index - 1].timestamp)
+        line(points, smooth: false)
+            .stroke(gap > longGap ? QuotaTrendStyle.unrecorded : QuotaSourceStyle.claudeCode,
+                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
     }
 
     private func otherDeviceSegments(_ run: [Int]) -> [Int] {
@@ -398,8 +425,8 @@ private struct ClaudeQuotaPlot: View {
         return (0..<max(0, run.count - 1)).filter { series.sources[series.samples[run[$0 + 1]].timestamp] == .otherDevices }
     }
 
-    private func segmentPath(_ points: [CGPoint], _ i: Int, size: CGSize) -> Path {
-        let (c1, c2) = controls(points, i, height: size.height)
+    private func segmentPath(_ points: [CGPoint], _ i: Int) -> Path {
+        let (c1, c2) = controls(points, i)
         return Path { path in
             path.move(to: points[i])
             path.addCurve(to: points[i + 1], control1: c1, control2: c2)
@@ -410,21 +437,17 @@ private struct ClaudeQuotaPlot: View {
     private func runView(_ run: [Int], size: CGSize) -> some View {
         let points = run.map { point(series.samples[$0], size: size) }
         if points.count > 1 {
-            areaPath(points, size: size)
-                .fill(LinearGradient(colors: [QuotaSourceStyle.claudeCode.opacity(0.22),
-                                              QuotaSourceStyle.claudeCode.opacity(0.0)],
-                                     startPoint: .top, endPoint: .bottom))
             // One continuous stroke per run, then the other-device segments
             // on top, so joints never show as dashes.
-            linePath(points, size: size)
+            line(points, smooth: true)
                 .stroke(QuotaSourceStyle.claudeCode,
                         style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
             ForEach(otherDeviceSegments(run), id: \.self) { i in
-                segmentPath(points, i, size: size)
+                segmentPath(points, i)
                     .stroke(QuotaSourceStyle.otherDevices,
                             style: StrokeStyle(lineWidth: 2.4, lineCap: .butt, lineJoin: .round))
             }
-        } else if let only = points.first {
+        } else if series.samples.count == 1, let only = points.first {
             Circle().fill(QuotaSourceStyle.claudeCode).frame(width: 4, height: 4).position(only)
         }
     }
@@ -446,6 +469,140 @@ private struct ClaudeQuotaPlot: View {
             Color.clear.frame(width: 10, height: 10).contentShape(Rectangle())
                 .position(point(sample, size: size))
                 .help("\(sample.timestamp.formatted(date: .abbreviated, time: .shortened)): \(L("%.1f%% used", sample.usedPercent))")
+        }
+    }
+}
+
+/// Stretches with readings, as brand-colored marks on a faint track under the plot.
+private struct QuotaRecordedStrip: View {
+    let spans: [DateInterval]
+    let scale: QuotaTrendScale
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            ZStack(alignment: .topLeading) {
+                Capsule().fill(Color.primary.opacity(0.07))
+                    .frame(width: max(0, width - 32), height: 3)
+                    .position(x: 4 + max(0, width - 32) / 2, y: 4)
+                ForEach(spans, id: \.self) { span in
+                    let left = scale.x(span.start, width: width), right = scale.x(span.end, width: width)
+                    Color.clear
+                        .frame(width: max(3, right - left), height: 8)
+                        .overlay(Capsule().fill(QuotaSourceStyle.claudeCode).frame(height: 3))
+                        .contentShape(Rectangle())
+                        .position(x: (left + right) / 2, y: 4)
+                        .help(Self.describe(span))
+                }
+            }
+        }
+        .frame(height: 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(L("Recorded")))
+        .accessibilityValue(Text(spans.map(Self.describe).joined(separator: "; ")))
+    }
+
+    private static func describe(_ span: DateInterval) -> String {
+        let start = span.start.formatted(date: .abbreviated, time: .shortened)
+        guard span.duration > 0 else { return L("Recorded %@", start) }
+        let sameDay = Calendar.current.isDate(span.start, inSameDayAs: span.end)
+        return L("Recorded %@ – %@", start, span.end.formatted(date: sameDay ? .omitted : .abbreviated, time: .shortened))
+    }
+}
+
+/// Hour ticks for the last day, or day ticks for a billing cycle. Labels are
+/// placed by priority (edges and "Now" first) and dropped when they would overlap.
+private struct QuotaTimeAxis: View {
+    let scale: QuotaTrendScale
+    let now: Date
+    let daily: Bool
+
+    private struct Tick: Hashable {
+        let text: String
+        let x: CGFloat
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                ForEach(ticks(width: geometry.size.width), id: \.self) { tick in
+                    Text(tick.text).fixedSize().position(x: tick.x, y: 6)
+                }
+            }
+        }
+        .frame(height: 12)
+        .font(.system(size: 9).monospacedDigit())
+        .foregroundColor(.secondary)
+    }
+
+    private func ticks(width: CGFloat) -> [Tick] {
+        var placed: [Tick] = []
+        func place(_ text: String, at x: CGFloat, clearance: CGFloat) {
+            guard placed.allSatisfy({ abs($0.x - x) >= clearance }) else { return }
+            placed.append(Tick(text: text, x: x))
+        }
+        let calendar = Calendar.current
+        let range = scale.range
+        let plotWidth = max(1, width - 32)
+        let nowX = scale.x(now, width: width)
+        if daily {
+            place(Self.dayFormatter.string(from: range.start), at: 14, clearance: 0)
+            place(L("Now"), at: nowX, clearance: 34)
+            place(Self.dayFormatter.string(from: range.end), at: 4 + plotWidth, clearance: 34)
+            let days = max(1, range.duration / 86_400)
+            let perDay = plotWidth / CGFloat(days)
+            let step = [1, 2, 3, 5, 7, 10, 14].first { CGFloat($0) * perDay >= 34 } ?? 14
+            var day = calendar.startOfDay(for: range.start)
+            for index in 0..<64 {
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day), next < range.end else { break }
+                day = next
+                if (index + 1) % step == 0 {
+                    place(Self.dayFormatter.string(from: day), at: scale.x(day, width: width), clearance: 32)
+                }
+            }
+        } else {
+            place(L("Now"), at: nowX, clearance: 0)
+            let firstHour = calendar.nextDate(after: range.start, matching: DateComponents(minute: 0),
+                                              matchingPolicy: .nextTime) ?? range.start
+            for offset in 0..<24 {
+                let date = firstHour.addingTimeInterval(Double(offset) * 3600)
+                let x = scale.x(date, width: width)
+                guard calendar.component(.hour, from: date) % 6 == 0, x >= 14 else { continue }
+                place(Self.hourFormatter.string(from: date), at: x, clearance: 30)
+            }
+        }
+        return placed
+    }
+
+    private static let hourFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:00"
+        return formatter
+    }()
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M/d"
+        return formatter
+    }()
+}
+
+/// Explains the two line colors and the recorded strip.
+private struct QuotaTrendKey: View {
+    var body: some View {
+        HStack(spacing: 14) {
+            item(QuotaSourceStyle.claudeCode, L("Recorded"))
+            item(QuotaTrendStyle.unrecorded, L("No readings, joined"))
+            Spacer()
+        }
+        .font(.system(size: 9))
+        .foregroundColor(.secondary)
+    }
+
+    private func item(_ color: Color, _ title: String) -> some View {
+        HStack(spacing: 5) {
+            Capsule().fill(color).frame(width: 12, height: 3)
+            Text(title)
         }
     }
 }

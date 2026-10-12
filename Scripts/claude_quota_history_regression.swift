@@ -54,28 +54,41 @@ struct ClaudeQuotaHistoryRegression {
             ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end),
             ClaudeQuotaSample(timestamp: end, usedPercent: 40, resetsAt: end),
         ] { precondition(!ClaudeQuotaSeries.connects(before, after), "reset/decrease/missing interval must break chart") }
-        // A long unobserved interval inside one window is bridged (dashed);
-        // resets, corrections and windows that ended in the gap are not.
-        precondition(ClaudeQuotaSeries.bridges(before, ClaudeQuotaSample(
-            timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end)), "same window bridges a gap")
-        for after in [
-            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 1, resetsAt: end),
-            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end.addingTimeInterval(3600)),
-            ClaudeQuotaSample(timestamp: end, usedPercent: 40, resetsAt: end),
-        ] { precondition(!ClaudeQuotaSeries.bridges(before, after), "reset/decrease must not be bridged") }
-        let noReset = ClaudeQuotaSample(timestamp: secondTime, usedPercent: 10, resetsAt: nil)
-        precondition(!ClaudeQuotaSeries.bridges(noReset, ClaudeQuotaSample(
-            timestamp: secondTime.addingTimeInterval(4000), usedPercent: 12, resetsAt: nil)), "unknown window is never bridged")
+        // Across a reset the chart drops at the old window's reset time.
+        precondition(ClaudeQuotaSeries.reset(between: before, ClaudeQuotaSample(
+            timestamp: end.addingTimeInterval(4000), usedPercent: 5, resetsAt: end.addingTimeInterval(7200))) == end)
+        precondition(ClaudeQuotaSeries.reset(between: before, ClaudeQuotaSample(
+            timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end)) == nil, "same window has no reset")
         let gapSeries = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
-            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(7200), usedPercent: 50, resetsAt: end),
-            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(9000), usedPercent: 51, resetsAt: end),
+            ClaudeQuotaSample(timestamp: secondTime, usedPercent: 50, resetsAt: end),
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(1800), usedPercent: 51, resetsAt: end),
             ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(20000), usedPercent: 55, resetsAt: end),
         ])
-        precondition(gapSeries.unobservedIntervals(from: secondTime, to: secondTime.addingTimeInterval(20600)) == [
-            DateInterval(start: secondTime, end: secondTime.addingTimeInterval(7200)),
-            DateInterval(start: secondTime.addingTimeInterval(9000), end: secondTime.addingTimeInterval(20000)),
-        ], "leading and inner gaps are marked; short tails are not")
-        precondition(reloaded.record(snapshot: second, now: start.addingTimeInterval(90000)).isEmpty, "24h display excludes stale observations")
+        precondition(gapSeries.recordedSpans(maxGap: 3600) == [
+            DateInterval(start: secondTime, end: secondTime.addingTimeInterval(1800)),
+            DateInterval(start: secondTime.addingTimeInterval(20000), duration: 0),
+        ], "recorded stretches split at gaps over an hour")
+        precondition(gapSeries.recordedSpans(maxGap: 86400).count == 1, "a month view only splits at long gaps")
+        precondition(ClaudeQuotaSeries.longGap(over: DateInterval(start: secondTime, duration: 86400)) == 3600 &&
+                     ClaudeQuotaSeries.longGap(over: DateInterval(start: secondTime, duration: 30 * 86400)) == 15 * 3600)
+        let dense = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: (0..<100).map {
+            ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(Double($0) * 60), usedPercent: Double($0) / 4, resetsAt: end)
+        })
+        let thin = dense.thinned(bucket: 600)
+        precondition(thin.samples.count == 11 && thin.samples.last == dense.samples.last, "thinning keeps one per bucket and the latest")
+        // Billing cycle: the subscription month containing now, rolled from any anchor.
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        func day(_ text: String) -> Date { ISO8601DateFormatter().date(from: text + "T00:00:00Z")! }
+        let today = day("2026-10-12").addingTimeInterval(3600)
+        for anchor in ["2026-10-14", "2026-08-14", "2027-01-14"] {
+            precondition(ClaudeQuotaSeries.billingCycle(now: today, anchor: day(anchor), calendar: utc)
+                == DateInterval(start: day("2026-09-14"), end: day("2026-10-14")), "cycle from \(anchor)")
+        }
+        precondition(ClaudeQuotaSeries.billingCycle(now: today, anchor: nil, calendar: utc)
+            == DateInterval(start: today.addingTimeInterval(-30 * 86400), end: today), "no subscription date: last 30 days")
+        precondition(reloaded.record(snapshot: second, now: start.addingTimeInterval(90000)).map(\.id) == ["weekly"],
+                     "5-hour lane shows a day; the weekly lane keeps the billing month")
         // Corrupt storage must remain recoverable, not overwritten by new observations.
         try Data("broken".utf8).write(to: file)
         let broken = ClaudeQuotaHistoryStore(storageDirectory: directory)

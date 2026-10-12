@@ -330,7 +330,8 @@ final class DashboardStore: ObservableObject {
     private func attachClaudeQuotaHistory(to dashboard: inout ProviderDashboard, snapshot: ProviderSnapshot) {
         guard snapshot.provider == "claude" else { return }
         dashboard.claudeQuotaHistory = claudeQuotaHistoryStore.record(snapshot: snapshot)
-            .map { $0.attributed(activeMinutes: claudeActiveMinutes) }
+            // The activity log only covers about a day; older rises stay unattributed.
+            .map { $0.attributed(activeMinutes: claudeActiveMinutes, since: Date().addingTimeInterval(-86_400)) }
         dashboard.claudeProductBreakdown = claudeAccountUsage?.breakdown
         dashboard.claudeIncludedCredit = claudeAccountUsage?.includedCredit
         dashboard.claudeQuotaHistoryNotice = snapshot.claudeQuotaAccountKey == nil

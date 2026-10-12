@@ -57,7 +57,7 @@ enum UIGallery {
                     dashboard.claudeIncludedCredit = usage.includedCredit
                 }
                 dashboard.claudeQuotaHistory = quotaHistory.record(snapshot: snapshot)
-                    .map { $0.attributed(activeMinutes: activeMinutes) }
+                    .map { $0.attributed(activeMinutes: activeMinutes, since: Date().addingTimeInterval(-86_400)) }
                 for series in dashboard.claudeQuotaHistory {
                     print(String(format: "%@: %d samples, Claude Code %.1f pts, other %.1f pts",
                                  series.id, series.samples.count, series.claudeCodePoints, series.otherDevicePoints))

@@ -2,12 +2,14 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
-## 2026-10-12 额度趋势图拼接空缺
+## 2026-10-12 额度趋势图：订阅周期 + 连续曲线
 
-- 用户反馈“每周”曲线被 Mac 休眠或应用未运行的空档切成几段，看起来很割裂。
-- `ClaudeQuotaSeries.bridges`：同一窗口（`resetsAt` 相差 ≤300 s，且重置时间晚于后一读数）、用量没有下降的两个读数，不论隔多久都可以拼接。没有 `resetsAt` 的读数不跨空档拼接。`connects` 等于 `bridges` 加上间隔 ≤ `observedGap`（1 h）。
-- 图上空档用虚线直线连接，下方用更淡的面积填充（窗口内用量只增不减，真实曲线必然落在两个读数之间）。`unobservedIntervals` 返回超过 1 h 没有读数的区间，画成浅灰底带；宽度 ≥40pt 且区间内没有重置标记时，顶部标注“未记录”，悬停显示起止时间。跨重置的空档只画底带，不连线。
-- 画廊现在同时渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`（`ClaudeQuotaHistoryView(window:)`）。
+- 用户要求：每周视图显示整个订阅月的趋势；中间缺的直接连上，差距大的换颜色；重点标出有记录的时间点。用户明确否定了“未记录”灰带和文字（已删除），不要再加回来。
+- **范围**：5 小时为近 24 h；每周为 `ClaudeQuotaSeries.billingCycle(now:anchor:)`，即包含当前时间的订阅月，锚点取 `SubscriptionTiming.resolve`（账号的 expires/renews，或订阅卡片里手填的日期，按整月滚动）。没有日期时用近 30 天。标题相应显示“额度趋势 · 本订阅周期 / 30 天”。周期在未来结束时画一条“现在”虚线。存储保留期从 30 天改为 `ClaudeQuotaHistoryStore.retention`（35 天），`record` 的 weekly 返回整个保留期，由视图按周期截取。
+- **连线**：所有相邻读数都连起来。`connects` 的连续段画成平滑曲线；其余画直线连接器。间隔超过 `longGap(over:)`（max(1 h, 范围/48)：24 h 视图为 1 h，月视图约 15 h）时用灰色（`QuotaTrendStyle.unrecorded`），否则用品牌色。跨重置时（`reset(between:)`，即前一读数的 `resetsAt`）先保持原值到重置时刻，再落到 0，然后连到下一读数。“重置”标记放在这个时刻（未知时退回 `windowStart`）。面积填充是一条整体路径，分段填充会出现竖向接缝。
+- **记录时段**：曲线下方的 `QuotaRecordedStrip` 是浅色轨道，有记录的区间（`recordedSpans(maxGap: longGap)`）用品牌色标出，悬停显示起止时间；下面一行图例说明“有记录 / 无记录，直接相连”。时间轴每周视图用 M/d 日期刻度，按优先级放置（起点、现在、终点，然后是刻度），避免重叠。
+- 一个月约 1500 个读数，绘制前先用 `thinned(bucket: range/400)` 抽稀（断点两侧和最新读数始终保留）。来源归因 `attributed(activeMinutes:since:)` 只统计近 24 h，因为本机活动日志只覆盖约 26 h。
+- 画廊渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`。画廊进程的 UserDefaults 域是 `ui_gallery`，要预览订阅周期，可以先 `defaults write ui_gallery subscriptionDate.claude.<hash> "expires|YYYY-MM-DD"`，用完删除。
 
 ## 2026-10-09 额度重置动画
 

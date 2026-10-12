@@ -48,12 +48,12 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
     }
 
     /// Splits quota consumption between local Claude Code and everything
-    /// else. A rise counts as Claude Code when Claude Code logged any usage
+    /// else, for rises after `since` (the span the activity log covers). A rise counts as Claude Code when Claude Code logged any usage
     /// between the two samples (with `slack` before the first, since the
     /// server reports usage with a short delay); otherwise it came from web,
     /// desktop or another device. Overlapping use is credited to Claude
     /// Code, so the other-device share is a lower bound.
-    func attributed(activeMinutes: Set<Int>, slack: TimeInterval = 180) -> ClaudeQuotaSeries {
+    func attributed(activeMinutes: Set<Int>, since: Date = .distantPast, slack: TimeInterval = 180) -> ClaudeQuotaSeries {
         var result = self
         result.sources = [:]
         result.claudeCodePoints = 0
@@ -63,7 +63,7 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
             let previous = samples[index - 1]
             let next = samples[index]
             let delta = next.usedPercent - previous.usedPercent
-            guard Self.connects(previous, next), delta > 0.05 else { continue }
+            guard previous.timestamp >= since, Self.connects(previous, next), delta > 0.05 else { continue }
             let first = Int(previous.timestamp.addingTimeInterval(-slack).timeIntervalSince1970 / 60)
             let last = Int(next.timestamp.timeIntervalSince1970 / 60)
             let local = first <= last && (first...last).contains { activeMinutes.contains($0) }
@@ -78,31 +78,78 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
 
     /// Do not draw consumption through resets, corrections or an unobserved interval.
     static func connects(_ previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Bool {
-        next.timestamp.timeIntervalSince(previous.timestamp) <= observedGap && bridges(previous, next)
-    }
-
-    /// Readings in the same window with no reset or correction between them,
-    /// however far apart. Across an unobserved interval (the Mac asleep or the
-    /// app not running) the chart joins them with a dashed line: usage only
-    /// rises within a window, so the gap is bounded by the two readings.
-    static func bridges(_ previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Bool {
-        guard let resetsAt = previous.resetsAt else {
-            return next.resetsAt == nil && next.timestamp > previous.timestamp &&
-                next.timestamp.timeIntervalSince(previous.timestamp) <= observedGap &&
-                next.usedPercent >= previous.usedPercent
-        }
-        return next.timestamp > previous.timestamp &&
-            sameWindow(resetsAt, next.resetsAt) &&
-            resetsAt > next.timestamp &&
+        next.timestamp > previous.timestamp &&
+            next.timestamp.timeIntervalSince(previous.timestamp) <= observedGap &&
+            sameWindow(previous.resetsAt, next.resetsAt) &&
+            !(previous.resetsAt.map { $0 <= next.timestamp } ?? false) &&
             next.usedPercent >= previous.usedPercent
     }
 
-    /// Stretches of `start...end` with no reading for longer than `observedGap`.
-    func unobservedIntervals(from start: Date, to end: Date) -> [DateInterval] {
-        let times = [start] + samples.map(\.timestamp).filter { $0 > start && $0 < end } + [end]
-        return zip(times, times.dropFirst()).compactMap { from, to in
-            to.timeIntervalSince(from) > Self.observedGap ? DateInterval(start: from, end: to) : nil
+    /// When the window of `previous` ended between the two readings, if known.
+    static func reset(between previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Date? {
+        guard let resetsAt = previous.resetsAt, !sameWindow(resetsAt, next.resetsAt),
+              resetsAt > previous.timestamp, resetsAt <= next.timestamp.addingTimeInterval(300) else { return nil }
+        return min(resetsAt, next.timestamp)
+    }
+
+    /// Readings inside `range`.
+    func within(_ range: DateInterval) -> ClaudeQuotaSeries {
+        ClaudeQuotaSeries(id: id, title: title,
+                          samples: samples.filter { $0.timestamp >= range.start && $0.timestamp <= range.end },
+                          sources: sources, claudeCodePoints: claudeCodePoints, otherDevicePoints: otherDevicePoints)
+    }
+
+    /// Gaps longer than this are drawn as unrecorded: an hour over a day, about
+    /// 15 hours over a month, so only real breaks stand out at either scale.
+    static func longGap(over range: DateInterval) -> TimeInterval {
+        max(observedGap, range.duration / 48)
+    }
+
+    /// Stretches with a reading at least every `maxGap`. A lone reading is a zero-length span.
+    func recordedSpans(maxGap: TimeInterval) -> [DateInterval] {
+        var spans: [DateInterval] = []
+        for sample in samples {
+            if let last = spans.last, sample.timestamp.timeIntervalSince(last.end) <= maxGap {
+                spans[spans.count - 1] = DateInterval(start: last.start, end: sample.timestamp)
+            } else {
+                spans.append(DateInterval(start: sample.timestamp, duration: 0))
+            }
         }
+        return spans
+    }
+
+    /// At most one reading per `bucket` seconds, for drawing a long range.
+    /// Readings on either side of a reset, correction or gap are always kept,
+    /// as is the latest one, so the shape and the breaks stay exact.
+    func thinned(bucket: TimeInterval) -> ClaudeQuotaSeries {
+        guard bucket > 0, samples.count > 2 else { return self }
+        var kept: [ClaudeQuotaSample] = []
+        for (index, sample) in samples.enumerated() {
+            let isEdge = index == 0 || index == samples.count - 1 ||
+                !Self.connects(samples[index - 1], sample) || !Self.connects(sample, samples[index + 1])
+            if isEdge || kept.last.map({ sample.timestamp.timeIntervalSince($0.timestamp) >= bucket }) ?? true {
+                kept.append(sample)
+            }
+        }
+        return ClaudeQuotaSeries(id: id, title: title, samples: kept, sources: sources,
+                                 claudeCodePoints: claudeCodePoints, otherDevicePoints: otherDevicePoints)
+    }
+
+    /// The subscription month that contains `now`, given any renewal or
+    /// expiry date (rolled by whole months). Without one, the last 30 days.
+    static func billingCycle(now: Date, anchor: Date?, calendar: Calendar = .current) -> DateInterval {
+        guard var end = anchor else { return DateInterval(start: now.addingTimeInterval(-30 * 86_400), end: now) }
+        for _ in 0..<600 where end <= now {
+            guard let next = calendar.date(byAdding: .month, value: 1, to: end) else { break }
+            end = next
+        }
+        for _ in 0..<600 {
+            guard let previous = calendar.date(byAdding: .month, value: -1, to: end), previous > now else { break }
+            end = previous
+        }
+        let start = calendar.date(byAdding: .month, value: -1, to: end) ?? end.addingTimeInterval(-30 * 86_400)
+        guard end > now, start <= now else { return DateInterval(start: now.addingTimeInterval(-30 * 86_400), end: now) }
+        return DateInterval(start: start, end: end)
     }
 
     /// The server reports a window's reset time with a few seconds of drift
@@ -148,6 +195,8 @@ extension ProviderSnapshot {
 
 /// Account quota percentages stay separate from token and estimated-cost history.
 final class ClaudeQuotaHistoryStore {
+    /// Long enough to hold a full subscription month.
+    static let retention: TimeInterval = 35 * 86_400
     private let fileURL: URL
     private var accounts: [String: [String: [ClaudeQuotaSample]]] = [:]
     private var canSave = true
@@ -171,7 +220,7 @@ final class ClaudeQuotaHistoryStore {
 
     func record(snapshot: ProviderSnapshot, now: Date = Date()) -> [ClaudeQuotaSeries] {
         guard let key = snapshot.claudeQuotaAccountKey else { return [] }
-        let cutoff = now.addingTimeInterval(-30 * 86400)
+        let cutoff = now.addingTimeInterval(-Self.retention)
         // Only upstream measurement times can create samples. Enrichment, currency changes,
         // errors and repeated cached responses must never fabricate fresh observations.
         if snapshot.error == nil, let reportedTime = snapshot.usage?.updatedAt,
@@ -200,8 +249,9 @@ final class ClaudeQuotaHistoryStore {
                 save()
             }
         }
-        let displayCutoff = now.addingTimeInterval(-86400)
-        return [("five-hour", L("5 hours")), ("weekly", L("Weekly"))].compactMap { id, title in
+        // The weekly trend spans a whole subscription month; the view picks the cycle.
+        return [("five-hour", L("5 hours"), 86_400.0), ("weekly", L("Weekly"), Self.retention)].compactMap { id, title, span in
+            let displayCutoff = now.addingTimeInterval(-span)
             let samples = (accounts[key]?[id] ?? []).filter {
                 $0.timestamp >= displayCutoff && $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
             }.sorted { $0.timestamp < $1.timestamp }

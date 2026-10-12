@@ -9,7 +9,9 @@
 - **连线**：所有相邻读数都连起来。`connects` 的连续段画成平滑曲线；其余画直线连接器。间隔超过 `longGap(over:)`（max(1 h, 范围/48)：24 h 视图为 1 h，月视图约 15 h）时用灰色（`QuotaTrendStyle.unrecorded`），否则用品牌色。跨重置时（`reset(between:)`，即前一读数的 `resetsAt`）先保持原值到重置时刻，再落到 0，然后连到下一读数。“重置”标记放在这个时刻（未知时退回 `windowStart`）。面积填充是一条整体路径，分段填充会出现竖向接缝。
 - **记录时段**：曲线下方的 `QuotaRecordedStrip` 是浅色轨道，有记录的区间（`recordedSpans(maxGap: longGap)`）用品牌色标出，悬停显示起止时间；下面一行图例说明“有记录 / 无记录，直接相连”。时间轴每周视图用 M/d 日期刻度，按优先级放置（起点、现在、终点，然后是刻度），避免重叠。
 - 一个月约 1500 个读数，绘制前先用 `thinned(bucket: range/400)` 抽稀（断点两侧和最新读数始终保留）。来源归因 `attributed(activeMinutes:since:)` 只统计近 24 h，因为本机活动日志只覆盖约 26 h。
-- 画廊渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`。画廊进程的 UserDefaults 域是 `ui_gallery`，要预览订阅周期，可以先 `defaults write ui_gallery subscriptionDate.claude.<hash> "expires|YYYY-MM-DD"`，用完删除。
+- **历史永久保存**（用户要求）：去掉了 35 天清理和每条 10000 个样本的上限，`record` 返回全部历史。实测约 15 KB/天（每个读数 86 B，两个窗口），一年约 5.5 MB 磁盘、约 2 MB 内存。
+- **左右滚动**：两个窗口都可以滚动。`pan` 是相对当前范围往回的秒数，上限是最早的读数到达左边缘。可以用触控板横向滑动或 shift+滚轮（`HorizontalScrollReader`：本地 scrollWheel 监视器，只吃掉落在图上、横向为主的事件，纵向事件交给外层 ScrollView；视图本身 `hitTest` 返回 nil，不影响悬停提示），也可以用鼠标拖动（向右拖看更早），或点 ‹ › 每次移动一个完整范围。滚动后出现“回到现在”，切换窗口时归零。图上方显示当前可见范围。`within(range)` 用二分查找，并额外带上范围两侧各一个读数，所以线会延伸出边缘，由 `PlotClip` 裁掉。只有最新读数在可见范围内时才画当前值圆点。24 h 视图的 0 点刻度显示日期。
+- 画廊渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`，外加 `quota-trend-five-hour-scrolled-*`（`ClaudeQuotaHistoryView(scrolledBack:)`）。画廊进程的 UserDefaults 域是 `ui_gallery`，要预览订阅周期，可以先 `defaults write ui_gallery subscriptionDate.claude.<hash> "expires|YYYY-MM-DD"`，用完删除。
 
 ## 2026-10-09 额度重置动画
 

@@ -69,6 +69,12 @@ struct ClaudeQuotaHistoryRegression {
             DateInterval(start: secondTime.addingTimeInterval(20000), duration: 0),
         ], "recorded stretches split at gaps over an hour")
         precondition(gapSeries.recordedSpans(maxGap: 86400).count == 1, "a month view only splits at long gaps")
+        precondition(gapSeries.within(DateInterval(start: secondTime.addingTimeInterval(1000), duration: 1000)).samples == gapSeries.samples,
+                     "a scrolled range keeps the nearest reading on each side")
+        precondition(gapSeries.within(DateInterval(start: secondTime.addingTimeInterval(1800), duration: 60)).samples
+                     == Array(gapSeries.samples[0...2]) &&
+                     gapSeries.within(DateInterval(start: secondTime.addingTimeInterval(30000), duration: 60)).samples
+                     == [gapSeries.samples[2]], "range edges are inclusive; past the end keeps the last reading")
         precondition(ClaudeQuotaSeries.longGap(over: DateInterval(start: secondTime, duration: 86400)) == 3600 &&
                      ClaudeQuotaSeries.longGap(over: DateInterval(start: secondTime, duration: 30 * 86400)) == 15 * 3600)
         let dense = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: (0..<100).map {
@@ -87,8 +93,9 @@ struct ClaudeQuotaHistoryRegression {
         }
         precondition(ClaudeQuotaSeries.billingCycle(now: today, anchor: nil, calendar: utc)
             == DateInterval(start: today.addingTimeInterval(-30 * 86400), end: today), "no subscription date: last 30 days")
-        precondition(reloaded.record(snapshot: second, now: start.addingTimeInterval(90000)).map(\.id) == ["weekly"],
-                     "5-hour lane shows a day; the weekly lane keeps the billing month")
+        let yearLater = reloaded.record(snapshot: second, now: start.addingTimeInterval(400 * 86400))
+        precondition(yearLater.map(\.id) == ["five-hour", "weekly"] && yearLater[0].samples == saved[0].samples,
+                     "history is kept indefinitely; the view picks the range")
         // Corrupt storage must remain recoverable, not overwritten by new observations.
         try Data("broken".utf8).write(to: file)
         let broken = ClaudeQuotaHistoryStore(storageDirectory: directory)

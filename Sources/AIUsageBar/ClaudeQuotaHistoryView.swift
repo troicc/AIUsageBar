@@ -15,13 +15,18 @@ struct ClaudeQuotaCoverageView: View {
 struct ClaudeQuotaHistoryView: View {
     let dashboard: ProviderDashboard
     @State private var selected: String
+    /// How far the visible range is scrolled back from the current one, in seconds.
+    @State private var pan: TimeInterval = 0
+    @State private var dragStartPan: TimeInterval?
     let now: Date
 
     /// `expanded` is kept for callers; the trend is always shown now.
-    init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour") {
+    init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour",
+         scrolledBack: TimeInterval = 0) {
         self.dashboard = dashboard
         self.now = now
         _selected = State(initialValue: window)
+        _pan = State(initialValue: scrolledBack)
     }
 
     private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
@@ -40,9 +45,25 @@ struct ClaudeQuotaHistoryView: View {
     }
 
     /// The weekly lane spans the current subscription month; the 5-hour lane the last day.
-    private var range: DateInterval {
+    private var currentRange: DateInterval {
         isWeekly ? ClaudeQuotaSeries.billingCycle(now: now, anchor: subscriptionDate)
             : DateInterval(start: now.addingTimeInterval(-86_400), end: now)
+    }
+
+    /// The visible range: the current one, scrolled back by `pan`.
+    private var range: DateInterval {
+        let current = currentRange
+        return DateInterval(start: current.start.addingTimeInterval(-pan), duration: current.duration)
+    }
+
+    /// Far enough back for the oldest reading to reach the left edge.
+    private var maxPan: TimeInterval {
+        guard let first = lane?.samples.first else { return 0 }
+        return max(0, currentRange.start.timeIntervalSince(first.timestamp))
+    }
+
+    private func scroll(by seconds: TimeInterval) {
+        pan = min(maxPan, max(0, pan + seconds))
     }
 
     private var title: String {
@@ -63,10 +84,11 @@ struct ClaudeQuotaHistoryView: View {
                         QuotaWindowSwitch(series: dashboard.claudeQuotaHistory, selected: $selected)
                     }
                 }
-                if let series = series, let last = series.samples.last {
-                    summary(series, last: last)
+                if let lane = lane, let series = series, let last = lane.samples.last {
+                    summary(lane, last: last)
+                    navigation
                     chart(series)
-                    if official == nil { legend(series) }
+                    if official == nil { legend(lane) }
                 } else {
                     Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
                         .font(.system(size: 11)).foregroundColor(.secondary)
@@ -88,6 +110,59 @@ struct ClaudeQuotaHistoryView: View {
                 }
             }
         }
+        .onChange(of: selected) { _ in pan = 0 }
+    }
+
+    /// Visible range, and buttons to step back and forth by one range.
+    private var navigation: some View {
+        HStack(spacing: 6) {
+            Text(rangeText)
+                .font(.system(size: 10).monospacedDigit())
+                .foregroundColor(.secondary)
+                .help(L("Swipe sideways or drag the chart to scroll through history."))
+            Spacer()
+            if pan > 0 {
+                Button(L("Back to now")) { pan = 0 }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.accentColor)
+            }
+            navigationButton("chevron.left", help: L("Earlier"), enabled: pan < maxPan) { scroll(by: range.duration) }
+            navigationButton("chevron.right", help: L("Later"), enabled: pan > 0) { scroll(by: -range.duration) }
+        }
+    }
+
+    private func navigationButton(_ symbol: String, help: String, enabled: Bool,
+                                  action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .semibold))
+                .frame(width: 22, height: 18)
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(enabled ? .primary : .secondary.opacity(0.4))
+        .disabled(!enabled)
+        .help(help)
+        .accessibilityLabel(Text(help))
+    }
+
+    /// Dragging right reveals earlier readings, like moving the paper.
+    private func drag(plotWidth: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                let start = dragStartPan ?? pan
+                dragStartPan = start
+                pan = min(maxPan, max(0, start + Double(value.translation.width / plotWidth) * range.duration))
+            }
+            .onEnded { _ in dragStartPan = nil }
+    }
+
+    private var rangeText: String {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate(isWeekly ? "yMd" : "MdHHmm")
+        return "\(formatter.string(from: range.start)) – \(formatter.string(from: range.end))"
     }
 
     /// Curve, the strip of recorded stretches under it, and the time axis.
@@ -98,9 +173,18 @@ struct ClaudeQuotaHistoryView: View {
         return VStack(alignment: .leading, spacing: 4) {
             // Per-segment source coloring is an estimate; when the
             // account reports the official breakdown, show that instead.
-            ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
-                            longGap: longGap, showsSources: official == nil)
-                .frame(height: 128)
+            GeometryReader { geometry in
+                ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
+                                longGap: longGap,
+                                showsLatest: series.samples.last == lane?.samples.last
+                                    && range.contains(series.samples.last?.timestamp ?? .distantPast),
+                                showsSources: official == nil)
+                    .background(HorizontalScrollReader { deltaX in
+                        scroll(by: deltaX / max(1, geometry.size.width - 32) * range.duration)
+                    })
+                    .gesture(drag(plotWidth: max(1, geometry.size.width - 32)))
+            }
+            .frame(height: 128)
             QuotaRecordedStrip(spans: spans, scale: scale)
             QuotaTimeAxis(scale: scale, now: now, daily: isWeekly)
             if spans.count > 1 { QuotaTrendKey().padding(.top, 2) }
@@ -207,14 +291,68 @@ private struct QuotaWindowSwitch: View {
     }
 }
 
+/// Reports horizontal trackpad swipes and shift-scrolling over its frame,
+/// and lets vertical scrolling through to the enclosing scroll view.
+private struct HorizontalScrollReader: NSViewRepresentable {
+    let onScroll: (Double) -> Void
+
+    func makeNSView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ view: ReaderView, context: Context) {
+        view.onScroll = onScroll
+    }
+
+    final class ReaderView: NSView {
+        var onScroll: ((Double) -> Void)?
+        private var monitor: Any?
+
+        // Transparent to clicks and hovering; scrolling is read by the monitor.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor = monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self = self, let window = self.window, event.window === window,
+                      abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY),
+                      self.bounds.contains(self.convert(event.locationInWindow, from: nil))
+                else { return event }
+                self.onScroll?(Double(event.scrollingDeltaX * (event.hasPreciseScrollingDeltas ? 1 : 8)))
+                return nil
+            }
+        }
+
+        deinit {
+            if let monitor = monitor { NSEvent.removeMonitor(monitor) }
+        }
+    }
+}
+
 /// Maps dates in a trend's range to x positions. The right 28 pt hold the
 /// percent labels.
 struct QuotaTrendScale {
     let range: DateInterval
 
+    /// Position kept inside the range, for the strip and the axis.
     func x(_ date: Date, width: CGFloat) -> CGFloat {
-        let fraction = range.duration > 0 ? date.timeIntervalSince(range.start) / range.duration : 1
-        return 4 + CGFloat(max(0, min(1, fraction))) * max(0, width - 32)
+        4 + CGFloat(max(0, min(1, fraction(date)))) * max(0, width - 32)
+    }
+
+    /// Position that may fall outside the range, for drawing a line that runs past the edges.
+    func position(_ date: Date, width: CGFloat) -> CGFloat {
+        4 + CGFloat(fraction(date)) * max(0, width - 32)
+    }
+
+    private func fraction(_ date: Date) -> Double {
+        range.duration > 0 ? date.timeIntervalSince(range.start) / range.duration : 1
     }
 }
 
@@ -234,9 +372,11 @@ private struct ClaudeQuotaPlot: View {
     let scale: QuotaTrendScale
     let now: Date
     let longGap: TimeInterval
+    /// Whether the last reading is the latest one, marked as the current value.
+    var showsLatest = true
     var showsSources = true
 
-    private func x(_ date: Date, size: CGSize) -> CGFloat { scale.x(date, width: size.width) }
+    private func x(_ date: Date, size: CGSize) -> CGFloat { scale.position(date, width: size.width) }
 
     private func y(_ percent: Double, _ size: CGSize) -> CGFloat {
         6 + CGFloat(1 - percent / 100) * (size.height - 12)
@@ -283,15 +423,18 @@ private struct ClaudeQuotaPlot: View {
             ZStack(alignment: .topLeading) {
                 grid(geometry.size)
                 nowMarker(geometry.size)
-                resetMarkers(geometry.size)
-                area(geometry.size).fill(fill)
-                ForEach(connectors, id: \.self) { index in
-                    connectorView(index, size: geometry.size)
+                ZStack(alignment: .topLeading) {
+                    resetMarkers(geometry.size)
+                    area(geometry.size).fill(fill)
+                    ForEach(connectors, id: \.self) { index in
+                        connectorView(index, size: geometry.size)
+                    }
+                    ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
+                        runView(run, size: geometry.size)
+                    }
                 }
-                ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
-                    runView(run, size: geometry.size)
-                }
-                currentValue(geometry.size)
+                .clipShape(PlotClip())
+                if showsLatest { currentValue(geometry.size) }
                 hoverTargets(geometry.size)
             }
         }
@@ -343,17 +486,22 @@ private struct ClaudeQuotaPlot: View {
             // otherwise the new window's start.
             let reset = ClaudeQuotaSeries.reset(between: series.samples[index - 1], series.samples[index])
             let markerX = x(reset ?? series.windowStart(at: index), size: size)
-            Path { path in
-                path.move(to: CGPoint(x: markerX, y: 0))
-                path.addLine(to: CGPoint(x: markerX, y: size.height))
-            }
-            .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
-            Text(L("Reset"))
-                .font(.system(size: 8, weight: .medium))
-                .foregroundColor(.secondary)
-                .fixedSize()
-                .position(x: min(markerX, size.width - 46), y: 4)
+            if (0...(size.width - 28)).contains(markerX) { resetMarker(at: markerX, size: size) }
         }
+    }
+
+    @ViewBuilder
+    private func resetMarker(at markerX: CGFloat, size: CGSize) -> some View {
+        Path { path in
+            path.move(to: CGPoint(x: markerX, y: 0))
+            path.addLine(to: CGPoint(x: markerX, y: size.height))
+        }
+        .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
+        Text(L("Reset"))
+            .font(.system(size: 8, weight: .medium))
+            .foregroundColor(.secondary)
+            .fixedSize()
+            .position(x: min(markerX, size.width - 46), y: 4)
     }
 
     /// Area under the whole line (runs and connectors) as one path, so the
@@ -465,11 +613,19 @@ private struct ClaudeQuotaPlot: View {
 
     @ViewBuilder
     private func hoverTargets(_ size: CGSize) -> some View {
-        ForEach(series.samples) { sample in
+        ForEach(series.samples.filter { scale.range.contains($0.timestamp) }) { sample in
             Color.clear.frame(width: 10, height: 10).contentShape(Rectangle())
                 .position(point(sample, size: size))
                 .help("\(sample.timestamp.formatted(date: .abbreviated, time: .shortened)): \(L("%.1f%% used", sample.usedPercent))")
         }
+    }
+}
+
+/// The plot area left of the percent labels; lines that run past a scrolled
+/// view's edges are cut here.
+private struct PlotClip: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY - 4, width: max(0, rect.width - 25), height: rect.height + 8))
     }
 }
 
@@ -545,9 +701,10 @@ private struct QuotaTimeAxis: View {
         let range = scale.range
         let plotWidth = max(1, width - 32)
         let nowX = scale.x(now, width: width)
+        let showsNow = now >= range.start && now <= range.end.addingTimeInterval(60)
         if daily {
             place(Self.dayFormatter.string(from: range.start), at: 14, clearance: 0)
-            place(L("Now"), at: nowX, clearance: 34)
+            if showsNow { place(L("Now"), at: nowX, clearance: 34) }
             place(Self.dayFormatter.string(from: range.end), at: 4 + plotWidth, clearance: 34)
             let days = max(1, range.duration / 86_400)
             let perDay = plotWidth / CGFloat(days)
@@ -561,14 +718,16 @@ private struct QuotaTimeAxis: View {
                 }
             }
         } else {
-            place(L("Now"), at: nowX, clearance: 0)
+            if showsNow { place(L("Now"), at: nowX, clearance: 0) }
             let firstHour = calendar.nextDate(after: range.start, matching: DateComponents(minute: 0),
                                               matchingPolicy: .nextTime) ?? range.start
             for offset in 0..<24 {
                 let date = firstHour.addingTimeInterval(Double(offset) * 3600)
                 let x = scale.x(date, width: width)
-                guard calendar.component(.hour, from: date) % 6 == 0, x >= 14 else { continue }
-                place(Self.hourFormatter.string(from: date), at: x, clearance: 30)
+                let hour = calendar.component(.hour, from: date)
+                guard hour % 6 == 0, x >= 14, x <= width - 30 else { continue }
+                // Midnight shows the date, so a scrolled-back day can be told apart.
+                place((hour == 0 ? Self.dayFormatter : Self.hourFormatter).string(from: date), at: x, clearance: 30)
             }
         }
         return placed

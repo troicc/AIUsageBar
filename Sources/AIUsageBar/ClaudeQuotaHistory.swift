@@ -92,11 +92,23 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
         return min(resetsAt, next.timestamp)
     }
 
-    /// Readings inside `range`.
+    /// Readings inside `range`, plus the nearest one on each side so the line
+    /// runs on to the edges of a scrolled view.
     func within(_ range: DateInterval) -> ClaudeQuotaSeries {
-        ClaudeQuotaSeries(id: id, title: title,
-                          samples: samples.filter { $0.timestamp >= range.start && $0.timestamp <= range.end },
-                          sources: sources, claudeCodePoints: claudeCodePoints, otherDevicePoints: otherDevicePoints)
+        // Samples are sorted; binary search keeps scrolling through long histories cheap.
+        func firstIndex(after date: Date, inclusive: Bool) -> Int {
+            var low = 0, high = samples.count
+            while low < high {
+                let mid = (low + high) / 2
+                let time = samples[mid].timestamp
+                if inclusive ? time < date : time <= date { low = mid + 1 } else { high = mid }
+            }
+            return low
+        }
+        let lower = max(0, firstIndex(after: range.start, inclusive: true) - 1)
+        let upper = min(samples.count, firstIndex(after: range.end, inclusive: false) + 1)
+        return ClaudeQuotaSeries(id: id, title: title, samples: lower < upper ? Array(samples[lower..<upper]) : [],
+                                 sources: sources, claudeCodePoints: claudeCodePoints, otherDevicePoints: otherDevicePoints)
     }
 
     /// Gaps longer than this are drawn as unrecorded: an hour over a day, about
@@ -194,9 +206,8 @@ extension ProviderSnapshot {
 }
 
 /// Account quota percentages stay separate from token and estimated-cost history.
+/// History is kept indefinitely: about 15 KB a day on disk.
 final class ClaudeQuotaHistoryStore {
-    /// Long enough to hold a full subscription month.
-    static let retention: TimeInterval = 35 * 86_400
     private let fileURL: URL
     private var accounts: [String: [String: [ClaudeQuotaSample]]] = [:]
     private var canSave = true
@@ -220,11 +231,10 @@ final class ClaudeQuotaHistoryStore {
 
     func record(snapshot: ProviderSnapshot, now: Date = Date()) -> [ClaudeQuotaSeries] {
         guard let key = snapshot.claudeQuotaAccountKey else { return [] }
-        let cutoff = now.addingTimeInterval(-Self.retention)
         // Only upstream measurement times can create samples. Enrichment, currency changes,
         // errors and repeated cached responses must never fabricate fresh observations.
         if snapshot.error == nil, let reportedTime = snapshot.usage?.updatedAt,
-           reportedTime <= now, reportedTime >= cutoff {
+           reportedTime <= now {
             // ISO-8601 persistence uses seconds; keep in-memory identity at the same precision.
             let measured = Date(timeIntervalSince1970: floor(reportedTime.timeIntervalSince1970))
             var changed = false
@@ -233,7 +243,7 @@ final class ClaudeQuotaHistoryStore {
                 guard samples.last.map({ measured > $0.timestamp }) ?? true else { continue }
                 samples.append(ClaudeQuotaSample(timestamp: measured, usedPercent: lane.window.usedPercent!,
                     resetsAt: lane.window.resetsAt.map { Date(timeIntervalSince1970: floor($0.timeIntervalSince1970)) }))
-                accounts[key, default: [:]][lane.id] = Array(samples.suffix(10000))
+                accounts[key, default: [:]][lane.id] = samples
                 changed = true
             }
             if changed {
@@ -241,7 +251,7 @@ final class ClaudeQuotaHistoryStore {
                     var lanes = accounts[account] ?? [:]
                     for (lane, samples) in lanes {
                         lanes[lane] = samples.filter {
-                            $0.timestamp >= cutoff && $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
+                            $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
                         }.sorted { $0.timestamp < $1.timestamp }
                     }
                     accounts[account] = lanes.values.allSatisfy({ $0.isEmpty }) ? nil : lanes
@@ -249,11 +259,10 @@ final class ClaudeQuotaHistoryStore {
                 save()
             }
         }
-        // The weekly trend spans a whole subscription month; the view picks the cycle.
-        return [("five-hour", L("5 hours"), 86_400.0), ("weekly", L("Weekly"), Self.retention)].compactMap { id, title, span in
-            let displayCutoff = now.addingTimeInterval(-span)
+        // The whole history; the view shows a range of it and can be scrolled back.
+        return [("five-hour", L("5 hours")), ("weekly", L("Weekly"))].compactMap { id, title in
             let samples = (accounts[key]?[id] ?? []).filter {
-                $0.timestamp >= displayCutoff && $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
+                $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
             }.sorted { $0.timestamp < $1.timestamp }
             return samples.isEmpty ? nil : ClaudeQuotaSeries(id: id, title: title, samples: samples)
         }

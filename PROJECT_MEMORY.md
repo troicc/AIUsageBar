@@ -11,7 +11,8 @@
 - 一个月约 1500 个读数，绘制前先用 `thinned(bucket: range/400)` 抽稀（断点两侧和最新读数始终保留）。来源归因 `attributed(activeMinutes:since:)` 只统计近 24 h，因为本机活动日志只覆盖约 26 h。
 - **历史永久保存**（用户要求）：去掉了 35 天清理和每条 10000 个样本的上限，`record` 返回全部历史。实测约 15 KB/天（每个读数 86 B，两个窗口），一年约 5.5 MB 磁盘、约 2 MB 内存。
 - **左右滚动**：两个窗口都可以滚动。`pan` 是相对当前范围往回的秒数，上限是最早的读数到达左边缘。可以用触控板横向滑动或 shift+滚轮（`HorizontalScrollReader`：本地 scrollWheel 监视器，只吃掉落在图上、横向为主的事件，纵向事件交给外层 ScrollView；视图本身 `hitTest` 返回 nil，不影响悬停提示），也可以用鼠标拖动（向右拖看更早），或点 ‹ › 每次移动一个完整范围。滚动后出现“回到现在”，切换窗口时归零。图上方显示当前可见范围。`within(range)` 用二分查找，并额外带上范围两侧各一个读数，所以线会延伸出边缘，由 `PlotClip` 裁掉。只有最新读数在可见范围内时才画当前值圆点。24 h 视图的 0 点刻度显示日期。
-- 画廊渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`，外加 `quota-trend-five-hour-scrolled-*`（`ClaudeQuotaHistoryView(scrolledBack:)`）。画廊进程的 UserDefaults 域是 `ui_gallery`，要预览订阅周期，可以先 `defaults write ui_gallery subscriptionDate.claude.<hash> "expires|YYYY-MM-DD"`，用完删除。
+- **悬停读数**：用户说原先的 `.help` 提示“很不灵敏和精准”，现已删除。`ChartPointerReader` 用 NSTrackingArea（`.mouseMoved/.activeAlways/.inVisibleRect`）持续跟踪指针，视图本身 `hitTest` 返回 nil。`QuotaHoverReadout` 吸附到可见范围内时间最近的真实读数（不插值），画蓝色圆点（systemBlue）、竖向引导线和气泡（“已用 N%”加读数时间），气泡靠近顶部时翻到圆点下方。拖动或横向滚动时隐藏。`ClaudeQuotaPlot` 实现 `Equatable` 并用 `.equatable()`，指针移动时不重绘曲线。
+- 画廊渲染 `quota-trend-{five-hour,weekly}-{light,dark}.png`，外加 `-scrolled-`（`scrolledBack:`）和 `-hover-`（`pointer:`）两种状态。画廊进程的 UserDefaults 域是 `ui_gallery`，要预览订阅周期，可以先 `defaults write ui_gallery subscriptionDate.claude.<hash> "expires|YYYY-MM-DD"`，用完删除。
 
 ## 2026-10-09 额度重置动画
 

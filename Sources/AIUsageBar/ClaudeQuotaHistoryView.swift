@@ -18,15 +18,18 @@ struct ClaudeQuotaHistoryView: View {
     /// How far the visible range is scrolled back from the current one, in seconds.
     @State private var pan: TimeInterval = 0
     @State private var dragStartPan: TimeInterval?
+    /// Pointer position over the plot, for the hover readout.
+    @State private var pointer: CGPoint?
     let now: Date
 
     /// `expanded` is kept for callers; the trend is always shown now.
     init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour",
-         scrolledBack: TimeInterval = 0) {
+         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil) {
         self.dashboard = dashboard
         self.now = now
         _selected = State(initialValue: window)
         _pan = State(initialValue: scrolledBack)
+        _pointer = State(initialValue: pointer)
     }
 
     private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
@@ -174,15 +177,21 @@ struct ClaudeQuotaHistoryView: View {
             // Per-segment source coloring is an estimate; when the
             // account reports the official breakdown, show that instead.
             GeometryReader { geometry in
-                ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
-                                longGap: longGap,
-                                showsLatest: series.samples.last == lane?.samples.last
-                                    && range.contains(series.samples.last?.timestamp ?? .distantPast),
-                                showsSources: official == nil)
-                    .background(HorizontalScrollReader { deltaX in
-                        scroll(by: deltaX / max(1, geometry.size.width - 32) * range.duration)
-                    })
-                    .gesture(drag(plotWidth: max(1, geometry.size.width - 32)))
+                ZStack(alignment: .topLeading) {
+                    ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
+                                    longGap: longGap,
+                                    showsLatest: series.samples.last == lane?.samples.last
+                                        && range.contains(series.samples.last?.timestamp ?? .distantPast),
+                                    showsSources: official == nil)
+                        .equatable()
+                    if dragStartPan == nil, let pointer = pointer {
+                        QuotaHoverReadout(series: series, scale: scale, pointer: pointer)
+                    }
+                }
+                .background(ChartPointerReader(
+                    onScroll: { deltaX in scroll(by: deltaX / max(1, geometry.size.width - 32) * range.duration) },
+                    onHover: { pointer = $0 }))
+                .gesture(drag(plotWidth: max(1, geometry.size.width - 32)))
             }
             .frame(height: 128)
             QuotaRecordedStrip(spans: spans, scale: scale)
@@ -291,27 +300,51 @@ private struct QuotaWindowSwitch: View {
     }
 }
 
-/// Reports horizontal trackpad swipes and shift-scrolling over its frame,
-/// and lets vertical scrolling through to the enclosing scroll view.
-private struct HorizontalScrollReader: NSViewRepresentable {
+/// Follows the pointer over the chart, and reports horizontal trackpad
+/// swipes and shift-scrolling while letting vertical scrolling through to the
+/// enclosing scroll view.
+private struct ChartPointerReader: NSViewRepresentable {
     let onScroll: (Double) -> Void
+    let onHover: (CGPoint?) -> Void
 
     func makeNSView(context: Context) -> ReaderView {
         let view = ReaderView()
-        view.onScroll = onScroll
+        updateNSView(view, context: context)
         return view
     }
 
     func updateNSView(_ view: ReaderView, context: Context) {
         view.onScroll = onScroll
+        view.onHover = onHover
     }
 
     final class ReaderView: NSView {
         var onScroll: ((Double) -> Void)?
+        var onHover: ((CGPoint?) -> Void)?
         private var monitor: Any?
 
-        // Transparent to clicks and hovering; scrolling is read by the monitor.
+        override var isFlipped: Bool { true }
+
+        // Transparent to clicks; the pointer is read through a tracking area
+        // and scrolling through the monitor.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero,
+                                           options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                           owner: self, userInfo: nil))
+        }
+
+        override func mouseEntered(with event: NSEvent) { report(event) }
+        override func mouseMoved(with event: NSEvent) { report(event) }
+        override func mouseExited(with event: NSEvent) { onHover?(nil) }
+
+        private func report(_ event: NSEvent) {
+            let point = convert(event.locationInWindow, from: nil)
+            onHover?(bounds.contains(point) ? point : nil)
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -326,6 +359,7 @@ private struct HorizontalScrollReader: NSViewRepresentable {
                       self.bounds.contains(self.convert(event.locationInWindow, from: nil))
                 else { return event }
                 self.onScroll?(Double(event.scrollingDeltaX * (event.hasPreciseScrollingDeltas ? 1 : 8)))
+                self.onHover?(nil)
                 return nil
             }
         }
@@ -336,10 +370,76 @@ private struct HorizontalScrollReader: NSViewRepresentable {
     }
 }
 
+/// Snaps to the reading nearest the pointer's time and shows it: a blue dot
+/// on the line, a guide, and a callout with the usage and when it was read.
+private struct QuotaHoverReadout: View {
+    let series: ClaudeQuotaSeries
+    let scale: QuotaTrendScale
+    let pointer: CGPoint
+
+    var body: some View {
+        GeometryReader { geometry in
+            let size = geometry.size
+            if let sample = nearest(width: size.width) {
+                let point = CGPoint(x: scale.position(sample.timestamp, width: size.width),
+                                    y: 6 + CGFloat(1 - sample.usedPercent / 100) * (size.height - 12))
+                Path { path in
+                    path.move(to: CGPoint(x: point.x, y: 0))
+                    path.addLine(to: CGPoint(x: point.x, y: size.height - 6))
+                }
+                .stroke(QuotaTrendStyle.hover.opacity(0.35), lineWidth: 0.8)
+                Circle().fill(QuotaTrendStyle.hover.opacity(0.2)).frame(width: 14, height: 14).position(point)
+                Circle().fill(QuotaTrendStyle.hover).frame(width: 7, height: 7)
+                    .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                    .position(point)
+                callout(sample)
+                    .fixedSize()
+                    .position(x: min(max(point.x, 46), size.width - 74),
+                              y: point.y > 44 ? point.y - 24 : point.y + 24)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// Reading in the visible range closest in time to the pointer.
+    private func nearest(width: CGFloat) -> ClaudeQuotaSample? {
+        guard pointer.x <= width - 28 else { return nil }
+        let date = scale.date(at: pointer.x, width: width)
+        return series.samples
+            .filter { scale.range.contains($0.timestamp) }
+            .min { abs($0.timestamp.timeIntervalSince(date)) < abs($1.timestamp.timeIntervalSince(date)) }
+    }
+
+    private func callout(_ sample: ClaudeQuotaSample) -> some View {
+        let used = sample.usedPercent
+        let value = used.rounded() == used ? String(format: "%.0f", used) : String(format: "%.1f", used)
+        return VStack(alignment: .leading, spacing: 1) {
+            Text(L("%@%% used", value))
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            Text(sample.timestamp.formatted(date: .abbreviated, time: .shortened))
+                .font(.system(size: 9).monospacedDigit())
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
+            .shadow(color: .black.opacity(0.15), radius: 3, y: 1))
+        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .stroke(Color.primary.opacity(0.1), lineWidth: 0.5))
+    }
+}
+
 /// Maps dates in a trend's range to x positions. The right 28 pt hold the
 /// percent labels.
-struct QuotaTrendScale {
+struct QuotaTrendScale: Equatable {
     let range: DateInterval
+
+    /// Time at an x position in the plot.
+    func date(at x: CGFloat, width: CGFloat) -> Date {
+        let fraction = Double((x - 4) / max(1, width - 32))
+        return range.start.addingTimeInterval(fraction * range.duration)
+    }
 
     /// Position kept inside the range, for the strip and the axis.
     func x(_ date: Date, width: CGFloat) -> CGFloat {
@@ -357,6 +457,8 @@ struct QuotaTrendScale {
 }
 
 enum QuotaTrendStyle {
+    /// The hover readout's dot and guide.
+    static let hover = Color(nsColor: .systemBlue)
     /// Joins readings across a long stretch with none: the Mac asleep or the app not running.
     static let unrecorded = Color.secondary.opacity(0.55)
 }
@@ -367,7 +469,7 @@ enum QuotaTrendStyle {
 /// in the brand color after a short gap, gray after a long one (`longGap`). When a
 /// window reset in between, the connector holds the last reading until the
 /// reset, drops to zero, then rises to the next reading.
-private struct ClaudeQuotaPlot: View {
+private struct ClaudeQuotaPlot: View, Equatable {
     let series: ClaudeQuotaSeries
     let scale: QuotaTrendScale
     let now: Date
@@ -435,7 +537,6 @@ private struct ClaudeQuotaPlot: View {
                 }
                 .clipShape(PlotClip())
                 if showsLatest { currentValue(geometry.size) }
-                hoverTargets(geometry.size)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -608,15 +709,6 @@ private struct ClaudeQuotaPlot: View {
             Circle().fill(QuotaSourceStyle.claudeCode).frame(width: 7, height: 7)
                 .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
                 .position(position)
-        }
-    }
-
-    @ViewBuilder
-    private func hoverTargets(_ size: CGSize) -> some View {
-        ForEach(series.samples.filter { scale.range.contains($0.timestamp) }) { sample in
-            Color.clear.frame(width: 10, height: 10).contentShape(Rectangle())
-                .position(point(sample, size: size))
-                .help("\(sample.timestamp.formatted(date: .abbreviated, time: .shortened)): \(L("%.1f%% used", sample.usedPercent))")
         }
     }
 }

@@ -94,11 +94,22 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
     func reset(before index: Int) -> (end: Date, start: Date)? {
         guard index > 0, index < samples.count else { return nil }
         let previous = samples[index - 1], next = samples[index]
-        guard next.timestamp > previous.timestamp, !Self.sameWindow(previous.resetsAt, next.resetsAt) else { return nil }
+        guard next.timestamp > previous.timestamp else { return nil }
+        if Self.restartedEarly(previous, next) { return (previous.timestamp, previous.timestamp) }
+        guard !Self.sameWindow(previous.resetsAt, next.resetsAt) else { return nil }
         let start = windowStart(at: index)
         // A reading taken just after its own reset time still reports the old window.
         let end = min(max(previous.resetsAt ?? start, previous.timestamp), next.timestamp)
         return (end, max(start, end))
+    }
+
+    /// A drop at least this large within one window is a reset, not a correction.
+    static let earlyResetDrop: Double = 25
+
+    /// A window that started over before its reset time, keeping that time:
+    /// a reset card, or a reset granted by Anthropic.
+    static func restartedEarly(_ previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Bool {
+        sameWindow(previous.resetsAt, next.resetsAt) && previous.usedPercent - next.usedPercent >= earlyResetDrop
     }
 
     /// Whether a window ended between the readings at `index - 1` and `index`.
@@ -194,7 +205,7 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
 
     /// One window of this series, from its start to its reset, with the
     /// stretches it was used up and how much was used at the last reading.
-    /// The server can lower a used-up window again, so there may be several.
+    /// A window that started over early ends there, and the next one begins.
     struct Cycle: Hashable {
         let interval: DateInterval
         let exhausted: [DateInterval]
@@ -206,31 +217,42 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
         guard let duration = windowDuration else { return [] }
         var result: [Cycle] = []
         var group: [ClaudeQuotaSample] = []
-        func flush() {
+        // When the current group began by starting over early.
+        var restartedAt: Date?
+        func flush(endingEarlyAt early: Date?) {
             guard let resetsAt = group.last?.resetsAt, let last = group.last else { return }
-            // From the first reading at 100% to the next one below it, or the reset.
+            let start = max(resetsAt.addingTimeInterval(-duration), restartedAt ?? .distantPast)
+            let end = max(start, early ?? resetsAt)
+            // From the first reading at 100% to the next one below it, or the window's end.
             var exhausted: [DateInterval] = []
             var since: Date?
             for sample in group {
                 if sample.usedPercent >= 100 {
                     if since == nil { since = sample.timestamp }
-                } else if let start = since {
-                    exhausted.append(DateInterval(start: start, end: max(start, sample.timestamp)))
+                } else if let first = since {
+                    exhausted.append(DateInterval(start: first, end: max(first, sample.timestamp)))
                     since = nil
                 }
             }
-            if let start = since { exhausted.append(DateInterval(start: start, end: max(start, resetsAt))) }
-            result.append(Cycle(interval: DateInterval(start: resetsAt.addingTimeInterval(-duration), end: resetsAt),
-                                exhausted: exhausted, usedPercent: last.usedPercent))
+            if let first = since { exhausted.append(DateInterval(start: first, end: max(first, end))) }
+            result.append(Cycle(interval: DateInterval(start: start, end: end), exhausted: exhausted,
+                                usedPercent: last.usedPercent))
         }
         for sample in samples where sample.resetsAt != nil {
-            if let last = group.last, !Self.sameWindow(last.resetsAt, sample.resetsAt) {
-                flush()
-                group = []
+            if let last = group.last {
+                if !Self.sameWindow(last.resetsAt, sample.resetsAt) {
+                    flush(endingEarlyAt: nil)
+                    group = []
+                    restartedAt = nil
+                } else if Self.restartedEarly(last, sample) {
+                    flush(endingEarlyAt: last.timestamp)
+                    group = []
+                    restartedAt = last.timestamp
+                }
             }
             group.append(sample)
         }
-        flush()
+        flush(endingEarlyAt: nil)
         return result
     }
 

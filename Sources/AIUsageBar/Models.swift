@@ -164,8 +164,8 @@ struct ProviderSnapshot: Decodable, Hashable, Identifiable {
     var isFailed: Bool { error != nil }
 
     /// True when a quota window started over between two observations of
-    /// the same account: its reset time moved to a new window (or, without
-    /// reset times, usage fell sharply) and the used share dropped.
+    /// the same account: its reset time moved to a new window, or usage fell
+    /// sharply (a reset card keeps the reset time), and the used share dropped.
     static func quotaDidReset(from old: ProviderSnapshot, to new: ProviderSnapshot) -> Bool {
         guard old.id == new.id, new.error == nil else { return false }
         let oldWindows = [old.usage?.primary, old.usage?.secondary, old.usage?.tertiary].compactMap { $0 }
@@ -175,11 +175,11 @@ struct ProviderSnapshot: Decodable, Hashable, Identifiable {
                   let before = previous.usedPercent, let after = next.usedPercent,
                   before - after >= 5
             else { continue }
-            if let oldReset = previous.resetsAt, let newReset = next.resetsAt {
-                if newReset.timeIntervalSince(oldReset) > 600 { return true }
-            } else if before - after >= 25 {
+            if let oldReset = previous.resetsAt, let newReset = next.resetsAt,
+               newReset.timeIntervalSince(oldReset) > 600 {
                 return true
             }
+            if before - after >= 25 { return true }
         }
         return false
     }

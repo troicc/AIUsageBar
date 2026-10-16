@@ -148,4 +148,6 @@ require(!ProviderSnapshot.quotaDidReset(from: zaiSnapshot(40, reset: windowEnd),
         "a small correction inside the same window was treated as a reset")
 require(ProviderSnapshot.quotaDidReset(from: zaiSnapshot(80, reset: nil), to: zaiSnapshot(10, reset: nil)),
         "a sharp drop without reset times was not detected")
+require(ProviderSnapshot.quotaDidReset(from: zaiSnapshot(100, reset: windowEnd), to: zaiSnapshot(0, reset: windowEnd)),
+        "a reset card (same reset time, usage back to zero) was not detected")
 print("Quota reset detection regression passed.")

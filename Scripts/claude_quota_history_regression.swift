@@ -184,12 +184,26 @@ struct ClaudeQuotaHistoryRegression {
         precondition(weekCycles.count == 1 && weekCycles[0].interval == DateInterval(start: t0, end: weekEnd)
                      && weekCycles[0].exhausted == [DateInterval(start: t0.addingTimeInterval(19 * 3600), end: weekEnd)],
                      "one weekly window, used up from its 20th hour to its reset")
-        let lowered = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
+        // A reset card starts the week over with the same reset time: the
+        // line drops to zero there and a new weekly window begins.
+        let card = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
             ClaudeQuotaSample(timestamp: t0, usedPercent: 100, resetsAt: weekEnd),
-            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(3600), usedPercent: 60, resetsAt: weekEnd),
-        ]).cycles()
-        precondition(lowered[0].exhausted == [DateInterval(start: t0, end: t0.addingTimeInterval(3600))],
-                     "a used-up week the server lowers again ends its stretch")
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(120), usedPercent: 0, resetsAt: weekEnd.addingTimeInterval(60)),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(3600), usedPercent: 13, resetsAt: weekEnd),
+        ])
+        precondition(card.reset(before: 1).map { $0.end == t0 && $0.start == t0 } == true && card.hasReset(before: 1)
+                     && card.reset(before: 2) == nil, "a reset card is a reset at the last full reading")
+        precondition(card.consumedPoints(in: DateInterval(start: t0, end: weekEnd)) == 13, "consumption restarts from zero")
+        let cardCycles = card.cycles()
+        precondition(cardCycles.map(\.interval) == [DateInterval(start: weekEnd.addingTimeInterval(-7 * 86400), end: t0),
+                                                    DateInterval(start: t0, end: weekEnd)]
+                     && cardCycles[0].exhausted == [DateInterval(start: t0, duration: 0)] && cardCycles[1].exhausted.isEmpty,
+                     "the card ends one weekly window and begins the next")
+        let corrected = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
+            ClaudeQuotaSample(timestamp: t0, usedPercent: 40, resetsAt: weekEnd),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(120), usedPercent: 38, resetsAt: weekEnd),
+        ])
+        precondition(corrected.reset(before: 1) == nil && corrected.cycles().count == 1, "a small correction is not a reset")
         let allowance = ClaudeQuotaSeries.fiveHourWindowsPerWeek(fiveHour: fiveHourLane, weekly: weeklyLane,
                                                                  now: t0.addingTimeInterval(20 * 3600))!
         let lastWeekly = weeklySamples.last!.usedPercent

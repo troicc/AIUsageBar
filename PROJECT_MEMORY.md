@@ -2,6 +2,23 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-16 额度趋势“洞察”样式（节奏预测、额度规模、5 小时窗口、使用习惯）
+
+- 用户要求按建议顺序全部实现，并保留原版、可在设置里切换，所有界面要高级、优雅。设置 → 通用 → “额度趋势 · 显示样式”（`QuotaChartMode`，UserDefaults 键 `quotaChartMode`，默认 `insights`；`classic` 就是之前的图表）。视图通过 `@AppStorage` 读取，`ClaudeQuotaHistoryView(mode:)` 可强制指定（画廊用）。
+- 模型在 `ClaudeQuotaInsights.swift`（只依赖 Foundation，回归测试会编译）：
+  - `ClaudeQuotaSeries.pace(now:lookback:)`：当前窗口相对均匀节奏的位置；速率取最近 `lookback` 的消耗（每周 24 h，5 小时 1 h），窗口经过的时间不到 lookback/4 时 `isMeasured=false`、不做预测；预计用完时间早于重置时才给出。
+  - `scaleTrend`：每天“5 小时额度点数 ÷ 周额度点数”= 一周相当于几个满 5 小时额度（当天周额度 ≥5 点才计入，因为读数是整数）。`shift(in:)` 选取使两侧（对数）偏离中位数之和最小的分割点，每侧至少 3 天、变化 ≥30% 才报告。只比较中位数会出现并列，起点会被选错。本机数据：10/7 起约 4.6 个，之前约 10.3 个（↓56%），无法区分是周额度缩减、5 小时额度扩大，还是套餐或模型组合变化，界面上如实说明。
+  - `habits`：近 4 周的 5 小时消耗按星期×小时平均到每周；两个间隔至少 4 小时的高峰时段（按 3 小时平滑）；用量 <2% 的最长连续时段；近两周用满的 5 小时窗口从开始到用满的中位时间（约 2 小时 26 分）。`paceChange`：本周与上一周期每小时消耗的周额度之比（上一周期只算到用满为止）。
+  - `ClaudeQuotaSeries.consumed(before:)` / `consumptionSteps(since:)`，`Cycle.peakPercent`，`Cycle.overlaps(_:)`（只碰到范围边缘不算重叠，否则上一周会在左边缘留下一条阴影）。
+- 视图在 `ClaudeQuotaInsightsView.swift`（图形用 macOS 12 的 `Canvas` 绘制）：
+  - 洞察模式下，每周页的范围是当前周窗口（不是订阅月），叠加每个周窗口的均匀节奏斜线、用满时段的红色斜线阴影、从现在到预计用完时间（或到重置）的虚线预测，下方用 `QuotaWindowBars` 把每个 5 小时窗口画成柱子（宽 = 窗口时长，高 = 峰值，用满的为实色）。
+  - 5 小时页的 24 h 范围延伸到当前窗口的重置时刻，留出预测空间。两页大数字下都有 `QuotaPaceSummary`，例如“快于/慢于均匀节奏 N 点 + 预计用完时间”。
+  - 趋势卡片下方的 `ClaudeUsageInsightsSection` 依次显示：总结要点（周节奏与预测、与上一周期比较、常用/空闲时段、满额窗口用完时长）→ 额度规模（大号数字、变化提示、每日点 + 前后中位线、说明）→ 使用时段热力图（星期 × 小时，sqrt 色阶）。只有本周 Claude Code 占官方用量 ≥70% 时才显示“每 1% 周额度 ≈ $X”，否则说明参考性低。
+  - 重置标记：每次重置都画竖线，但标签距上一个标签不足 30 pt 时省略（重置卡与正常重置挨得很近时会重叠）。
+- Swift 5.6 类型检查：`habits` 里的 map 闭包需要标明类型；`costLine` 需要 `@MainActor`（`CurrencySettingsStore.display`）。翻译的占位符必须与英文的顺序一致（CI 测试 `testTranslatedFormatsKeepTheirPlaceholders` 不接受 `%2$d` 这类位置参数）。
+- 画廊额外渲染 `quota-trend-*-classic-*.png` 和 `quota-insights-{light,dark}.png`。
+- 验证：全部 contract、回归（新增节奏、变化点、每日规模、习惯用例）、视觉 5 项 PASS，画廊浅/深色截图已人工检查。已安装 build 202610161111，上一版备份在 `/private/tmp/aiusagebar-install-backup.Zf5PTP/AIUsageBar.app`。已提交到 main，未推送。
+
 ## 2026-10-16 跨重置归零、5 小时为主、周额度叠加、订阅日期自动化、按订阅周期计算用量价值
 
 - **跨重置必须从 0 开始**（用户指出曲线把新窗口和上一窗口直接相连）。根因：服务器在重置后约 25 秒仍返回旧窗口（如 10/14 16:40:25 读数的 `resetsAt` 是 16:40:00、67%），旧的 `reset(between:)` 要求 `resetsAt > previous.timestamp`，因此没识别出重置，画了一条从 67% 斜降到 10% 的线。现在改为 `ClaudeQuotaSeries.reset(before:) -> (end, start)`：只要相邻读数不是同一窗口（`!sameWindow`）就算跨窗口；线保持旧值到 `end`（旧窗口 `resetsAt`，夹在两读数之间），落到 0，保持 0 到 `start`（新窗口开始 = 新 `resetsAt` − 窗口长度），再从 0 升到新读数。“重置”标记用 `hasReset(before:)`：前一读数没有 `resetsAt`（空闲账号，usedPercent 0）时开始新窗口不算重置、不画标记。本机历史里 `resetsAt` 为 nil 的读数约占 12%，都是 0%。

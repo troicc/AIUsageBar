@@ -195,12 +195,28 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
     func consumedPoints(in range: DateInterval) -> Double {
         guard samples.count > 1 else { return 0 }
         var total = 0.0
-        for index in 1..<samples.count {
-            let previous = samples[index - 1], next = samples[index]
-            guard previous.timestamp >= range.start, next.timestamp <= range.end else { continue }
-            total += reset(before: index) != nil ? next.usedPercent : max(0, next.usedPercent - previous.usedPercent)
+        for index in 1..<samples.count where samples[index - 1].timestamp >= range.start
+            && samples[index].timestamp <= range.end
+        {
+            total += consumed(before: index)
         }
         return total
+    }
+
+    /// Points consumed between the readings at `index - 1` and `index`.
+    func consumed(before index: Int) -> Double {
+        let previous = samples[index - 1], next = samples[index]
+        return reset(before: index) != nil ? next.usedPercent : max(0, next.usedPercent - previous.usedPercent)
+    }
+
+    /// Each rise, timed at the reading that ends it, from `start` on.
+    func consumptionSteps(since start: Date = .distantPast) -> [(timestamp: Date, points: Double)] {
+        guard samples.count > 1 else { return [] }
+        return (1..<samples.count).compactMap { index in
+            guard samples[index - 1].timestamp >= start else { return nil }
+            let points = consumed(before: index)
+            return points > 0 ? (samples[index].timestamp, points) : nil
+        }
     }
 
     /// One window of this series, from its start to its reset, with the
@@ -210,6 +226,12 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
         let interval: DateInterval
         let exhausted: [DateInterval]
         let usedPercent: Double
+        var peakPercent: Double = 0
+
+        /// Shares more than an instant with `range`; touching its edge is not enough.
+        func overlaps(_ range: DateInterval) -> Bool {
+            min(interval.end, range.end) > max(interval.start, range.start)
+        }
     }
 
     /// The windows with a known reset time, oldest first.
@@ -236,7 +258,8 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
             }
             if let first = since { exhausted.append(DateInterval(start: first, end: max(first, end))) }
             result.append(Cycle(interval: DateInterval(start: start, end: end), exhausted: exhausted,
-                                usedPercent: last.usedPercent))
+                                usedPercent: last.usedPercent,
+                                peakPercent: group.map(\.usedPercent).max() ?? last.usedPercent))
         }
         for sample in samples where sample.resetsAt != nil {
             if let last = group.last {

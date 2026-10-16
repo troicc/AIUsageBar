@@ -213,6 +213,38 @@ struct ClaudeQuotaHistoryRegression {
         precondition(ClaudeQuotaSeries.fiveHourWindowsPerWeek(fiveHour: fiveHourLane, weekly: ClaudeQuotaSeries(
             id: "weekly", title: "Weekly", samples: Array(weeklySamples.prefix(3))), now: t0.addingTimeInterval(3 * 3600)) == nil,
                      "too little weekly use gives no estimate")
+        // Insights: pace against an even pace and the projected run-out.
+        let paceWeekEnd = t0.addingTimeInterval(7 * 86400)
+        let paced = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: (0...24).map {
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(Double($0) * 3600), usedPercent: Double($0), resetsAt: paceWeekEnd)
+        })
+        let paceNow = t0.addingTimeInterval(24 * 3600)
+        let pace = paced.pace(now: paceNow, lookback: 86400)!
+        precondition(abs(pace.ratePerHour - 1) < 0.001 && abs(pace.evenPercent - 100.0 / 7) < 0.001 && abs(pace.ahead - (24 - 100.0 / 7)) < 0.001,
+                     "one point an hour is ahead of an even week")
+        precondition(pace.runsOutAt == paceNow.addingTimeInterval(76 * 3600) && pace.isMeasured, "runs out 76 hours later")
+        precondition(paced.pace(now: t0.addingTimeInterval(3600), lookback: 86400)?.isMeasured == false,
+                     "an hour-old window is too young to project")
+        // Quota size: a clear drop in 5-hour windows per week is found where it happened.
+        var calendarUTC = Calendar(identifier: .gregorian)
+        calendarUTC.timeZone = TimeZone(identifier: "UTC")!
+        let points = (0..<10).map { day in
+            QuotaScaleTrend.Point(day: t0.addingTimeInterval(Double(day) * 86400), windowsPerWeek: day < 5 ? 12 : 4.5)
+        }
+        let found = ClaudeQuotaInsights.shift(in: points)!
+        precondition(found.day == points[5].day && found.before == 12 && found.after == 4.5 && found.change < -0.6)
+        precondition(ClaudeQuotaInsights.shift(in: points.map {
+            QuotaScaleTrend.Point(day: $0.day, windowsPerWeek: 5 + ($0.day.timeIntervalSince(t0) / 86400).truncatingRemainder(dividingBy: 2) * 0.4)
+        }) == nil, "noise is not a change")
+        let trend = ClaudeQuotaInsights.scaleTrend(fiveHour: fiveHourLane, weekly: weeklyLane, calendar: calendarUTC)
+        precondition(trend.points.count == 2 && trend.points.allSatisfy { abs($0.windowsPerWeek - 4) < 0.001 },
+                     "daily windows per week, split at midnight")
+        // Habits: busiest hours and how long a full 5-hour window lasts.
+        let habits = ClaudeQuotaInsights.habits(fiveHour: fiveHourLane, now: t0.addingTimeInterval(20 * 3600), calendar: calendarUTC)
+        precondition(abs(habits.grid.flatMap { $0 }.reduce(0, +) - 400) < 0.001, "every point lands in the grid")
+        precondition(habits.windowsUsed == 4 && habits.windowsUsedUp == 4 && habits.drainTime == 4 * 3600,
+                     "each window was used up four hours in")
+        precondition(habits.peakHours.count == 2, "two busiest hours")
         // Official account usage: per-product weekly breakdown and the
         // included credit (the window that carries dollar amounts).
         let accountJSON = Data("""

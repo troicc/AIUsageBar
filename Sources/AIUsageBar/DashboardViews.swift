@@ -56,6 +56,7 @@ struct ProviderDetailPopoverView: View {
                         quotaContent
                         ClaudeQuotaCoverageView(dashboard: dashboard)
                         ClaudeQuotaHistoryView(dashboard: dashboard)
+                        ClaudeUsageInsightsSection(dashboard: dashboard)
                     }
                     balanceHero
                     if dashboard.id != "claude" { quotaContent }

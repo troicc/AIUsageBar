@@ -88,12 +88,20 @@ enum UIGallery {
             if let claude = snapshots.first(where: { $0.provider == "claude" }), let dashboard = dashboards[claude.id] {
                 for (window, back, pointer) in [("five-hour", 0.0, CGPoint?.none), ("weekly", 0, nil), ("five-hour", 86_400, nil),
                                                 ("five-hour", 0, CGPoint(x: 262, y: 60)), ("weekly", 0, CGPoint(x: 226, y: 60))] {
-                    let name = "quota-trend-\(window)\(back > 0 ? "-scrolled" : "")\(pointer != nil ? "-hover" : "")-\(mode).png"
-                    render(ClaudeQuotaHistoryView(dashboard: dashboard, window: window, scrolledBack: back, pointer: pointer)
-                            .padding(16).frame(width: 390)
-                            .background(Color(nsColor: .windowBackgroundColor)),
-                           appearance: appearance, output: output.appendingPathComponent(name))
+                    for style in QuotaChartMode.allCases {
+                        let suffix = style == .classic ? "-classic" : ""
+                        let name = "quota-trend-\(window)\(back > 0 ? "-scrolled" : "")\(pointer != nil ? "-hover" : "")\(suffix)-\(mode).png"
+                        render(ClaudeQuotaHistoryView(dashboard: dashboard, window: window, scrolledBack: back, pointer: pointer,
+                                                      mode: style)
+                                .padding(16).frame(width: 390)
+                                .background(Color(nsColor: .windowBackgroundColor)),
+                               appearance: appearance, output: output.appendingPathComponent(name))
+                    }
                 }
+                render(ClaudeUsageInsightsCard(dashboard: dashboard, now: Date())
+                        .padding(16).frame(width: 390)
+                        .background(Color(nsColor: .windowBackgroundColor)),
+                       appearance: appearance, output: output.appendingPathComponent("quota-insights-\(mode).png"))
             }
             let entries = snapshots.map { AllProviderEntry(id: $0.id, dashboard: dashboards[$0.id] ?? DashboardParser.dashboard(snapshot: $0)) }
             render(AllProvidersContentView(entries: entries, isRefreshing: false, error: nil, refresh: {}, openSettings: {})

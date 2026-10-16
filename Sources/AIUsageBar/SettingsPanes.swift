@@ -402,6 +402,7 @@ struct SettingsBanner: View {
 
 struct GeneralSettingsView: View {
     @ObservedObject var store: SettingsStore
+    @AppStorage(QuotaChartMode.preferenceKey) private var quotaChartMode = QuotaChartMode.insights.rawValue
     private let intervals: [(String, TimeInterval)] = [
         ("1 minute", 60), ("2 minutes", 120), ("5 minutes", 300), ("15 minutes", 900), ("30 minutes", 1800),
     ]
@@ -427,6 +428,24 @@ struct GeneralSettingsView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .fixedSize()
+                }
+            }
+
+            SettingsSection(
+                title: L("Quota trend"),
+                footer: L(quotaChartMode == QuotaChartMode.classic.rawValue
+                    ? "The earlier charts: the weekly view spans the billing cycle."
+                    : "Pace and run-out forecasts, each 5-hour window, the size of the weekly allowance over time, and a summary of your habits."))
+            {
+                SettingsRow(title: L("Display style"), symbol: "chart.xyaxis.line", symbolColor: Color(nsColor: .systemOrange)) {
+                    Picker(L("Display style"), selection: $quotaChartMode) {
+                        ForEach(QuotaChartMode.allCases) { mode in
+                            Text(mode.title).tag(mode.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
                     .fixedSize()
                 }
             }

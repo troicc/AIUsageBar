@@ -20,13 +20,17 @@ struct ClaudeQuotaHistoryView: View {
     @State private var dragStartPan: TimeInterval?
     /// Pointer position over the plot, for the hover readout.
     @State private var pointer: CGPoint?
+    @AppStorage(QuotaChartMode.preferenceKey) private var storedMode = QuotaChartMode.insights.rawValue
     let now: Date
+    /// Overrides the display style chosen in Settings, for previews.
+    private let forcedMode: QuotaChartMode?
 
     /// `expanded` is kept for callers; the trend is always shown now.
     init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour",
-         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil) {
+         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil, mode: QuotaChartMode? = nil) {
         self.dashboard = dashboard
         self.now = now
+        forcedMode = mode
         _selected = State(initialValue: window)
         _pan = State(initialValue: scrolledBack)
         _pointer = State(initialValue: pointer)
@@ -40,16 +44,36 @@ struct ClaudeQuotaHistoryView: View {
 
     private var isWeekly: Bool { lane?.id == "weekly" }
 
+    private var showsInsights: Bool { (forcedMode ?? QuotaChartMode(rawValue: storedMode) ?? .insights) == .insights }
+
+    /// The weekly window that contains now; a week back when none is known.
+    private var currentWeek: DateInterval {
+        if let cycle = weeklyLane?.cycles().last?.interval, cycle.start <= now, cycle.end > now { return cycle }
+        return DateInterval(start: now.addingTimeInterval(-7 * 86_400), end: now)
+    }
+
+    /// The pace of the shown window, for the insights style.
+    private var pace: QuotaPace? {
+        guard showsInsights else { return nil }
+        return lane?.pace(now: now, lookback: isWeekly ? 86_400 : 3600)
+    }
+
     /// Renewal or expiry date, from the account, the subscription card or the subscription start.
     private var subscriptionDate: Date? {
         let manual = dashboard.subscriptionDatePreferenceKey.flatMap { UserDefaults.standard.string(forKey: $0) } ?? ""
         return dashboard.subscriptionTiming(manual: manual, now: now)?.date
     }
 
-    /// The weekly lane spans the current subscription month; the 5-hour lane the last day.
+    /// The weekly lane spans the current subscription month (the current
+    /// weekly window with insights); the 5-hour lane the last day.
     private var currentRange: DateInterval {
-        isWeekly ? ClaudeQuotaSeries.billingCycle(now: now, anchor: subscriptionDate)
-            : DateInterval(start: now.addingTimeInterval(-86_400), end: now)
+        guard isWeekly else {
+            // With insights the day runs on to the current window's reset, leaving room for the forecast.
+            let windowEnd = showsInsights ? lane?.cycles().last.flatMap { $0.interval.end > now ? $0.interval.end : nil } : nil
+            let end = min(windowEnd ?? now, now.addingTimeInterval(5 * 3600))
+            return DateInterval(start: end.addingTimeInterval(-86_400), end: end)
+        }
+        return showsInsights ? currentWeek : ClaudeQuotaSeries.billingCycle(now: now, anchor: subscriptionDate)
     }
 
     /// The visible range: the current one, scrolled back by `pan`.
@@ -70,6 +94,7 @@ struct ClaudeQuotaHistoryView: View {
 
     private var title: String {
         guard isWeekly else { return L("Quota trend · 24h") }
+        if showsInsights { return L("Quota trend · this week") }
         return subscriptionDate != nil ? L("Quota trend · this billing cycle") : L("Quota trend · 30 days")
     }
 
@@ -88,6 +113,7 @@ struct ClaudeQuotaHistoryView: View {
                 }
                 if let lane = lane, let series = series, let last = lane.samples.last {
                     summary(lane, last: last)
+                    if let pace = pace { QuotaPaceSummary(pace: pace, now: now) }
                     navigation
                     chart(series)
                     if official == nil { legend(lane) }
@@ -175,7 +201,11 @@ struct ClaudeQuotaHistoryView: View {
         let spans = series.recordedSpans(maxGap: longGap)
         // The 5-hour view also shows the weekly window it draws from.
         let weekly = isWeekly ? nil : weeklyLane
-        let cycles = weekly?.cycles().filter { $0.interval.intersects(range) } ?? []
+        let cycles = weekly?.cycles().filter { $0.overlaps(range) } ?? []
+        // With insights the weekly view adds pace guides and each 5-hour window.
+        let paced = showsInsights && isWeekly
+        let weeks = paced ? (lane?.cycles().filter { $0.overlaps(range) } ?? []) : []
+        let windows = paced ? (fiveHourLane?.cycles().filter { $0.overlaps(range) } ?? []) : []
         return VStack(alignment: .leading, spacing: 4) {
             // Per-segment source coloring is an estimate; when the
             // account reports the official breakdown, show that instead.
@@ -188,6 +218,11 @@ struct ClaudeQuotaHistoryView: View {
                                     showsSources: official == nil,
                                     companion: weekly?.within(range).thinned(bucket: range.duration / 400))
                         .equatable()
+                    if showsInsights {
+                        QuotaPaceOverlay(cycles: weeks, pace: range.end >= now.addingTimeInterval(-60) ? pace : nil,
+                                         scale: scale, now: now)
+                            .equatable()
+                    }
                     if dragStartPan == nil, let pointer = pointer {
                         QuotaHoverReadout(series: series, scale: scale, pointer: pointer)
                     }
@@ -201,7 +236,10 @@ struct ClaudeQuotaHistoryView: View {
             QuotaRecordedStrip(spans: spans, scale: scale)
             if !cycles.isEmpty { QuotaCycleStrip(cycles: cycles, scale: scale, now: now) }
             QuotaTimeAxis(scale: scale, now: now, daily: isWeekly)
-            if spans.count > 1 || weekly != nil {
+            if paced {
+                QuotaWindowBars(windows: windows, scale: scale).equatable().padding(.top, 6)
+                QuotaPaceKey().padding(.top, 4)
+            } else if spans.count > 1 || weekly != nil {
                 QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: weekly != nil).padding(.top, 2)
             }
             if let weekly = weekly { fiveHourAllowance(weekly) }
@@ -209,6 +247,7 @@ struct ClaudeQuotaHistoryView: View {
     }
 
     private var weeklyLane: ClaudeQuotaSeries? { dashboard.claudeQuotaHistory.first { $0.id == "weekly" } }
+    private var fiveHourLane: ClaudeQuotaSeries? { dashboard.claudeQuotaHistory.first { $0.id == "five-hour" } }
 
     /// How many full 5-hour windows a week holds, and how many are left in this one.
     @ViewBuilder
@@ -484,6 +523,11 @@ struct QuotaTrendScale: Equatable {
     private func fraction(_ date: Date) -> Double {
         range.duration > 0 ? date.timeIntervalSince(range.start) / range.duration : 1
     }
+
+    /// Vertical position of a used share in a plot of `height`, as the curve draws it.
+    static func plotY(_ percent: Double, height: CGFloat) -> CGFloat {
+        6 + CGFloat(1 - percent / 100) * (height - 12)
+    }
 }
 
 enum QuotaTrendStyle {
@@ -616,27 +660,35 @@ private struct ClaudeQuotaPlot: View, Equatable {
         series.samples.indices.dropFirst().filter { series.hasReset(before: $0) }
     }
 
-    @ViewBuilder
     private func resetMarkers(_ size: CGSize) -> some View {
-        ForEach(resetIndices, id: \.self) { index in
-            // Where the line drops: the old window's reset time.
+        // Where the line drops: the old window's reset time. Every reset gets
+        // a guide; a label that would collide with the previous one is left out.
+        var markers: [(x: CGFloat, labeled: Bool)] = []
+        for index in resetIndices {
             let markerX = x(series.reset(before: index)?.end ?? series.windowStart(at: index), size: size)
-            if (0...(size.width - 28)).contains(markerX) { resetMarker(at: markerX, size: size) }
+            guard (0...(size.width - 28)).contains(markerX) else { continue }
+            let lastLabel = markers.last { $0.labeled }?.x
+            markers.append((markerX, lastLabel.map { markerX - $0 >= 30 } ?? true))
+        }
+        return ForEach(markers.indices, id: \.self) { offset in
+            resetMarker(at: markers[offset].x, labeled: markers[offset].labeled, size: size)
         }
     }
 
     @ViewBuilder
-    private func resetMarker(at markerX: CGFloat, size: CGSize) -> some View {
+    private func resetMarker(at markerX: CGFloat, labeled: Bool, size: CGSize) -> some View {
         Path { path in
             path.move(to: CGPoint(x: markerX, y: 0))
             path.addLine(to: CGPoint(x: markerX, y: size.height))
         }
         .stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
-        Text(L("Reset"))
-            .font(.system(size: 8, weight: .medium))
-            .foregroundColor(.secondary)
-            .fixedSize()
-            .position(x: min(markerX, size.width - 46), y: 4)
+        if labeled {
+            Text(L("Reset"))
+                .font(.system(size: 8, weight: .medium))
+                .foregroundColor(.secondary)
+                .fixedSize()
+                .position(x: min(max(markerX, 12), size.width - 46), y: 4)
+        }
     }
 
     /// Area under the whole line (runs and connectors) as one path, so the
@@ -768,7 +820,7 @@ private struct ClaudeQuotaPlot: View, Equatable {
 
 /// The plot area left of the percent labels; lines that run past a scrolled
 /// view's edges are cut here.
-private struct PlotClip: Shape {
+struct PlotClip: Shape {
     func path(in rect: CGRect) -> Path {
         Path(CGRect(x: rect.minX, y: rect.minY - 4, width: max(0, rect.width - 25), height: rect.height + 8))
     }

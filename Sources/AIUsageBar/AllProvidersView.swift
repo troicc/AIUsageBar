@@ -178,6 +178,7 @@ struct AllProviderCard: View {
             }
             ClaudeQuotaCoverageView(dashboard: dashboard)
             ClaudeQuotaHistoryView(dashboard: dashboard)
+            ClaudeUsageInsightsSection(dashboard: dashboard)
         }
     }
 

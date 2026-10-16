@@ -191,57 +191,169 @@ struct QuotaPaceKey: View {
     }
 }
 
-/// One line under the trend's big numbers: ahead of or behind an even pace,
-/// and when the window runs out at the current rate.
-struct QuotaPaceSummary: View {
-    let pace: QuotaPace
-    let now: Date
+/// A secondary explanation, shown on hover instead of taking a line.
+struct InfoGlyph: View {
+    let text: String
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            chip
-            Text(detail)
-                .font(.system(size: 10))
+        Image(systemName: "info.circle")
+            .font(.system(size: 10))
+            .foregroundColor(.secondary.opacity(0.8))
+            .help(text)
+            .accessibilityLabel(Text(text))
+    }
+}
+
+/// A quiet inset surface that groups one chart or figure inside a card.
+struct InsightPanel<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
+    }
+}
+
+extension View {
+    /// Names a strip under the plot in the gutter beside it, where the percent labels sit.
+    func laneLabel(_ text: String) -> some View {
+        overlay(alignment: .trailing) {
+            Text(text)
+                .font(.system(size: 8, weight: .medium))
                 .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 24, alignment: .leading)
+        }
+    }
+}
+
+/// The trend's headline: what is left, set large, with the reset and the
+/// forecast beside it, and a gauge of use against an even pace.
+struct QuotaTrendHero: View {
+    let title: String
+    let last: ClaudeQuotaSample
+    let pace: QuotaPace?
+    let isWeekly: Bool
+    let now: Date
+
+    private var remaining: Double { max(0, 100 - last.usedPercent) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(InsightFormat.percent(remaining))
+                            .font(.system(size: 38, weight: .light, design: .rounded).monospacedDigit())
+                            .foregroundColor(remaining < 15 ? QuotaInsightStyle.usedUp : .primary)
+                        Text("%").font(.system(size: 16, weight: .light, design: .rounded)).foregroundColor(.secondary)
+                    }
+                    Text(L("%@ · remaining", title)).font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                Spacer(minLength: 12)
+                figures
+            }
+            if let pace = pace, pace.isMeasured, !pace.isExhausted { gauge(pace) }
+        }
+    }
+
+    private var figures: some View {
+        HStack(alignment: .bottom, spacing: 14) {
+            if let resetsAt = last.resetsAt, let countdown = DS.countdown(to: resetsAt, now: now) {
+                figure(countdown, caption: L("Until reset"), tint: .primary)
+            }
+            if let forecast = forecast {
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 0.5, height: 30)
+                figure(forecast.value, caption: forecast.caption, tint: forecast.tint)
+            }
+        }
+        .padding(.bottom, 1)
+    }
+
+    private func figure(_ value: String, caption: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.system(size: 16, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundColor(tint)
+                .lineLimit(1)
+            Text(caption).font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+        }
+        .fixedSize()
+    }
+
+    private var forecast: (value: String, caption: String, tint: Color)? {
+        guard let pace = pace else { return nil }
+        if pace.isExhausted { return (L("Used up"), L("This window"), QuotaInsightStyle.usedUp) }
+        guard pace.isMeasured else { return ("—", L("Forecast soon"), .secondary) }
+        if let runsOut = pace.runsOutAt {
+            let formatter = DateFormatter()
+            formatter.locale = L10n.locale
+            formatter.setLocalizedDateFormatFromTemplate(isWeekly ? "EEEHHmm" : "HHmm")
+            return (formatter.string(from: runsOut), L("Runs out"), QuotaInsightStyle.fast)
+        }
+        return (InsightFormat.percent(100 - pace.projectedAtReset(now: now)) + "%", L("Left at reset"), .primary)
+    }
+
+    /// Used so far as a fill, with a tick where an even pace would be now.
+    private func gauge(_ pace: QuotaPace) -> some View {
+        let difference = pace.ahead
+        let text = abs(difference) < 1
+            ? L("Right on an even pace")
+            : difference > 0 ? L("%@%% more than an even pace", InsightFormat.percent(difference))
+                : L("%@%% less than an even pace", InsightFormat.percent(-difference))
+        let tint = difference > 3 ? QuotaInsightStyle.fast : QuotaInsightStyle.brand
+        return HStack(spacing: 8) {
+            GeometryReader { geometry in
+                let width = geometry.size.width
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.08))
+                    Capsule().fill(tint.opacity(0.85)).frame(width: max(3, width * CGFloat(min(100, pace.usedPercent) / 100)))
+                    Rectangle().fill(Color.primary.opacity(0.55)).frame(width: 1.5, height: 10)
+                        .offset(x: width * CGFloat(pace.evenPercent / 100) - 0.75)
+                }
+            }
+            .frame(width: 96, height: 4)
+            Text(text).font(.system(size: 10, weight: .medium).monospacedDigit()).foregroundColor(.secondary)
+            InfoGlyph(text: L("Spread evenly over this window, %@%% would be used by now; %@%% is.",
+                              InsightFormat.percent(pace.evenPercent), InsightFormat.percent(pace.usedPercent)))
             Spacer(minLength: 0)
         }
     }
+}
 
-    private var tint: Color {
-        if pace.isExhausted { return QuotaInsightStyle.usedUp }
-        if pace.ahead > 3 { return QuotaInsightStyle.fast }
-        if pace.ahead < -3 { return QuotaInsightStyle.slow }
-        return QuotaInsightStyle.calm
-    }
+/// How many full 5-hour windows a week holds and how many are left in this
+/// one, from the same level the quota-size chart shows.
+struct QuotaAllowanceFigures: View {
+    let fiveHour: ClaudeQuotaSeries
+    let weekly: ClaudeQuotaSeries
+    let now: Date
 
-    private var chipText: String {
-        if pace.isExhausted { return L("Used up") }
-        if pace.ahead > 3 { return L("%@ pts ahead of pace", InsightFormat.percent(pace.ahead)) }
-        if pace.ahead < -3 { return L("%@ pts under pace", InsightFormat.percent(-pace.ahead)) }
-        return L("On an even pace")
-    }
-
-    private var chip: some View {
-        Text(chipText)
-            .font(.system(size: 10, weight: .semibold).monospacedDigit())
-            .foregroundColor(tint)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(tint.opacity(0.13)))
-            .fixedSize()
-    }
-
-    private var detail: String {
-        if pace.isExhausted {
-            return L("Resets in %@", InsightFormat.duration(pace.cycle.end.timeIntervalSince(now), now: now))
+    var body: some View {
+        if let perWeek = ClaudeQuotaInsights.scaleTrend(fiveHour: fiveHour, weekly: weekly).current {
+            let used = weekly.pace(now: now, lookback: 86_400)?.usedPercent ?? weekly.samples.last?.usedPercent ?? 0
+            InsightPanel {
+                HStack(alignment: .center, spacing: 14) {
+                    figure(InsightFormat.count(perWeek), caption: L("Per week, used in full"))
+                    Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 0.5, height: 28)
+                    figure(InsightFormat.count(max(0, 100 - used) / 100 * perWeek), caption: L("Left this week"))
+                    Spacer(minLength: 0)
+                    InfoGlyph(text: L("From the 5-hour and weekly quota used on the same days; see Quota size in Usage insights."))
+                }
+            }
         }
-        guard pace.isMeasured else { return L("A forecast follows once there are more readings.") }
-        if let runsOut = pace.runsOutAt {
-            return L("At this rate it runs out %@, %@ before the reset", InsightFormat.moment(runsOut),
-                     InsightFormat.duration(pace.cycle.end.timeIntervalSince(runsOut), now: now))
+    }
+
+    private func figure(_ value: String, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value).font(.system(size: 18, weight: .medium, design: .rounded).monospacedDigit())
+                Text(L("windows")).font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            Text(caption).font(.system(size: 10)).foregroundColor(.secondary)
         }
-        return L("At this rate it lasts until the reset, about %@%% used", InsightFormat.percent(pace.projectedAtReset(now: now)))
     }
 }
 
@@ -267,11 +379,12 @@ struct ClaudeUsageInsightsCard: View {
     let dashboard: ProviderDashboard
     let now: Date
 
-    private struct Bullet: Identifiable {
+    private struct Tile: Identifiable {
         let id: String
         let symbol: String
         let tint: Color
-        let title: String
+        let label: String
+        let value: String
         let detail: String?
     }
 
@@ -279,125 +392,132 @@ struct ClaudeUsageInsightsCard: View {
         if let insights = ClaudeQuotaInsights.make(history: dashboard.claudeQuotaHistory, now: now),
            insights.habits.grid.contains(where: { $0.contains { $0 > 0 } })
         {
-            DSCard(padding: 14) {
-                VStack(alignment: .leading, spacing: 14) {
+            DSCard(padding: 16) {
+                VStack(alignment: .leading, spacing: 12) {
                     header
-                    VStack(alignment: .leading, spacing: 11) {
-                        ForEach(bullets(insights)) { bulletRow($0) }
-                    }
-                    hairline
-                    QuotaScaleSection(trend: insights.scale, costLine: costLine)
-                    hairline
-                    QuotaHabitHeatmap(habits: insights.habits)
-                    Text(L("From the quota readings recorded on this Mac while AIUsageBar runs."))
-                        .font(.system(size: 9)).foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    tileGrid(tiles(insights))
+                    InsightPanel { QuotaScaleSection(trend: insights.scale, costLine: costLine) }
+                    InsightPanel { QuotaHabitHeatmap(habits: insights.habits) }
                 }
             }
         }
     }
 
     private var header: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 6) {
             Label(L("Usage insights"), systemImage: "sparkles")
                 .font(.system(size: 12, weight: .semibold))
+            InfoGlyph(text: L("From the quota readings recorded on this Mac while AIUsageBar runs."))
             Spacer()
             Text(L("Last 4 weeks")).font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 
-    private var hairline: some View {
-        Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+    /// Two tiles a row, each row as tall as its taller tile.
+    private func tileGrid(_ tiles: [Tile]) -> some View {
+        VStack(spacing: 8) {
+            ForEach(Array(stride(from: 0, to: tiles.count, by: 2)), id: \.self) { start in
+                HStack(alignment: .top, spacing: 8) {
+                    tileView(tiles[start])
+                    if start + 1 < tiles.count { tileView(tiles[start + 1]) } else { Color.clear.frame(maxWidth: .infinity) }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
-    private func bulletRow(_ bullet: Bullet) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            ZStack {
-                Circle().fill(bullet.tint.opacity(0.13))
-                Image(systemName: bullet.symbol)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(bullet.tint)
+    private func tileView(_ tile: Tile) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Image(systemName: tile.symbol).font(.system(size: 9, weight: .semibold)).foregroundColor(tile.tint)
+                Text(tile.label).font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
             }
-            .frame(width: 24, height: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(bullet.title).font(.system(size: 12, weight: .medium))
-                if let detail = bullet.detail {
-                    Text(detail).font(.system(size: 10)).foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            Text(tile.value)
+                .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if let detail = tile.detail {
+                Text(detail).font(.system(size: 10)).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
     }
 
-    private func bullets(_ insights: ClaudeQuotaInsights) -> [Bullet] {
-        [paceBullet(insights.weeklyPace), changeBullet(insights.paceChange),
-         hoursBullet(insights.habits), drainBullet(insights.habits)].compactMap { $0 }
+    private func tiles(_ insights: ClaudeQuotaInsights) -> [Tile] {
+        [paceTile(insights.weeklyPace), changeTile(insights.paceChange),
+         hoursTile(insights.habits), drainTile(insights.habits)].compactMap { $0 }
     }
 
-    private func paceBullet(_ pace: QuotaPace?) -> Bullet? {
+    private func paceTile(_ pace: QuotaPace?) -> Tile? {
         guard let pace = pace else { return nil }
+        let label = L("This week's outlook")
         if pace.isExhausted {
-            return Bullet(id: "pace", symbol: "exclamationmark.circle", tint: QuotaInsightStyle.usedUp,
-                          title: L("This week's quota is used up"),
-                          detail: L("Resets in %@", InsightFormat.duration(pace.cycle.end.timeIntervalSince(now), now: now)))
+            return Tile(id: "pace", symbol: "exclamationmark.circle.fill", tint: QuotaInsightStyle.usedUp, label: label,
+                        value: L("Used up"),
+                        detail: L("Resets in %@", InsightFormat.duration(pace.cycle.end.timeIntervalSince(now), now: now)))
         }
         guard pace.isMeasured else {
-            return Bullet(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.calm,
-                          title: L("The week has just started"),
-                          detail: L("%@%% used so far. A forecast follows once there are more readings.",
-                                    InsightFormat.percent(pace.usedPercent)))
+            return Tile(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.calm, label: label,
+                        value: L("%@%% used", InsightFormat.percent(pace.usedPercent)),
+                        detail: L("A forecast follows once there are more readings."))
         }
         if let runsOut = pace.runsOutAt {
-            return Bullet(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.fast,
-                          title: L("On course to run out early"),
-                          detail: L("At the last day's rate it runs out %@, %@ before the reset.",
-                                    InsightFormat.moment(runsOut),
-                                    InsightFormat.duration(pace.cycle.end.timeIntervalSince(runsOut), now: now)))
+            return Tile(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.fast, label: label,
+                        value: L("Runs out %@", InsightFormat.moment(runsOut)),
+                        detail: L("%@ before the reset, at the last day's rate.",
+                                  InsightFormat.duration(pace.cycle.end.timeIntervalSince(runsOut), now: now)))
         }
-        return Bullet(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.slow,
-                      title: L("On course to last the week"),
-                      detail: L("At the last day's rate about %@%% is used by the reset.",
-                                InsightFormat.percent(pace.projectedAtReset(now: now))))
+        return Tile(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.slow, label: label,
+                    value: L("Lasts the week"),
+                    detail: L("About %@%% left at the reset, at the last day's rate.",
+                              InsightFormat.percent(100 - pace.projectedAtReset(now: now))))
     }
 
-    private func changeBullet(_ change: Double?) -> Bullet? {
-        guard let change = change else { return nil }
-        let detail = L("Weekly quota used per hour, this week against the previous one.")
+    private func changeTile(_ change: Double?) -> Tile {
+        let label = L("Against last week")
+        guard let change = change else {
+            return Tile(id: "change", symbol: "arrow.left.arrow.right", tint: .secondary, label: label,
+                        value: "—", detail: L("Compared once this week has 12 hours of readings."))
+        }
+        let detail = L("Weekly quota used per hour.")
         if abs(change) < 0.1 {
-            return Bullet(id: "change", symbol: "equal.circle", tint: QuotaInsightStyle.calm,
-                          title: L("About as fast as last week"), detail: detail)
+            return Tile(id: "change", symbol: "equal", tint: QuotaInsightStyle.calm, label: label,
+                        value: L("About the same"), detail: detail)
         }
         let percent = InsightFormat.percent(abs(change) * 100)
         return change > 0
-            ? Bullet(id: "change", symbol: "arrow.up.right", tint: QuotaInsightStyle.fast,
-                     title: L("%@%% faster than last week", percent), detail: detail)
-            : Bullet(id: "change", symbol: "arrow.down.right", tint: QuotaInsightStyle.slow,
-                     title: L("%@%% slower than last week", percent), detail: detail)
+            ? Tile(id: "change", symbol: "arrow.up.right", tint: QuotaInsightStyle.fast, label: label,
+                   value: L("%@%% faster", percent), detail: detail)
+            : Tile(id: "change", symbol: "arrow.down.right", tint: QuotaInsightStyle.slow, label: label,
+                   value: L("%@%% slower", percent), detail: detail)
     }
 
-    private func hoursBullet(_ habits: QuotaHabits) -> Bullet? {
+    private func hoursTile(_ habits: QuotaHabits) -> Tile? {
         guard let first = habits.peakHours.first else { return nil }
-        let title = habits.peakHours.count > 1
-            ? L("Busiest around %@ and %@", InsightFormat.hour(first), InsightFormat.hour(habits.peakHours[1]))
-            : L("Busiest around %@", InsightFormat.hour(first))
+        let value = habits.peakHours.count > 1
+            ? InsightFormat.hour(first) + " · " + InsightFormat.hour(habits.peakHours[1])
+            : InsightFormat.hour(first)
         let detail = habits.quietStart.map {
             L("Hardly used from %@ to %@.", InsightFormat.hour($0), InsightFormat.hour($0 + habits.quietLength))
         }
-        return Bullet(id: "hours", symbol: "clock", tint: QuotaInsightStyle.brand, title: title, detail: detail)
+        return Tile(id: "hours", symbol: "clock.fill", tint: QuotaInsightStyle.brand, label: L("Busiest hours"),
+                    value: value, detail: detail)
     }
 
-    private func drainBullet(_ habits: QuotaHabits) -> Bullet? {
+    private func drainTile(_ habits: QuotaHabits) -> Tile? {
         guard habits.windowsUsed > 0 else { return nil }
         let detail = L("%d of %d 5-hour windows in the last two weeks were used up.",
                        habits.windowsUsedUp, habits.windowsUsed)
         guard let drain = habits.drainTime else {
-            return Bullet(id: "drain", symbol: "hourglass", tint: QuotaInsightStyle.slow,
-                          title: L("No 5-hour window used up lately"), detail: detail)
+            return Tile(id: "drain", symbol: "hourglass", tint: QuotaInsightStyle.slow, label: L("Full 5-hour window"),
+                        value: L("None used up"), detail: detail)
         }
-        return Bullet(id: "drain", symbol: "hourglass", tint: QuotaInsightStyle.fast,
-                      title: L("A full 5-hour window lasts about %@", InsightFormat.duration(drain, now: now)),
-                      detail: detail)
+        return Tile(id: "drain", symbol: "hourglass", tint: QuotaInsightStyle.fast, label: L("Full 5-hour window"),
+                    value: L("Lasts %@", InsightFormat.duration(drain, now: now)), detail: detail)
     }
 
     /// Cost of 1% of the weekly quota in local API-equivalent use, only when
@@ -426,13 +546,15 @@ struct QuotaScaleSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            DSSectionLabel(title: L("Quota size"), symbol: "ruler")
+            HStack(alignment: .center) {
+                DSSectionLabel(title: L("Quota size"), symbol: "ruler")
+                if let shift = trend.shift { shiftChip(shift) }
+            }
             if let current = trend.current, trend.points.count >= 2 {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(InsightFormat.count(current)).font(.system(size: 26, weight: .light, design: .rounded).monospacedDigit())
+                    Text(InsightFormat.count(current)).font(.system(size: 28, weight: .light, design: .rounded).monospacedDigit())
                     Text(L("full 5-hour windows per week")).font(.system(size: 11)).foregroundColor(.secondary)
-                    Spacer(minLength: 4)
-                    if let shift = trend.shift { shiftChip(shift) }
+                    Spacer(minLength: 0)
                 }
                 QuotaScaleChart(trend: trend).frame(height: 78)
                 Text(caption).font(.system(size: 10)).foregroundColor(.secondary)
@@ -536,7 +658,7 @@ struct QuotaScaleChart: View {
         context.stroke(after, with: .color(QuotaInsightStyle.brand), lineWidth: 1.6)
         let font = Font.system(size: 9, weight: .semibold, design: .rounded).monospacedDigit()
         context.draw(Text(InsightFormat.count(shift.before)).font(font).foregroundColor(.secondary),
-                     at: CGPoint(x: x(first) + 9, y: y(shift.before) - 7), anchor: .leading)
+                     at: CGPoint(x: split - 4, y: y(shift.before) - 7), anchor: .trailing)
         context.draw(Text(InsightFormat.count(shift.after)).font(font).foregroundColor(QuotaInsightStyle.brand),
                      at: CGPoint(x: plot.maxX + 5, y: y(shift.after)), anchor: .leading)
     }

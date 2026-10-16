@@ -101,44 +101,96 @@ struct ClaudeQuotaHistoryView: View {
     private var series: ClaudeQuotaSeries? { lane?.within(range) }
 
     var body: some View {
-        DSCard(padding: 14) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center) {
-                    Label(title, systemImage: "chart.xyaxis.line")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    if dashboard.claudeQuotaHistory.count > 1 {
-                        QuotaWindowSwitch(series: dashboard.claudeQuotaHistory, selected: $selected)
-                    }
-                }
-                if let lane = lane, let series = series, let last = lane.samples.last {
-                    summary(lane, last: last)
-                    if let pace = pace { QuotaPaceSummary(pace: pace, now: now) }
-                    navigation
-                    chart(series)
-                    if official == nil { legend(lane) }
-                } else {
-                    Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
-                        .font(.system(size: 11)).foregroundColor(.secondary)
-                }
-                if let official = official {
-                    Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
-                    ClaudeProductBreakdownView(breakdown: official)
-                }
-                if let credit = dashboard.claudeIncludedCredit {
-                    ClaudeIncludedCreditView(credit: credit)
-                }
-                Text(official != nil
-                     ? L("Shared by Claude Code, Cowork, chats and other apps. The weekly breakdown comes from your Claude account.")
-                     : L("Shared by web, desktop and Claude Code. Sources are estimated from Claude Code activity on this Mac; web chat tokens and costs are not available."))
-                    .font(.system(size: 10)).foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if series != nil, let notice = dashboard.claudeQuotaHistoryNotice {
-                    Text(notice).font(.system(size: 10)).foregroundColor(.secondary)
-                }
-            }
+        DSCard(padding: showsInsights ? 16 : 14) {
+            if showsInsights { insightsLayout } else { classicLayout }
         }
         .onChange(of: selected) { _ in pan = 0 }
+    }
+
+    private var sharedNote: String {
+        official != nil
+            ? L("Shared by Claude Code, Cowork, chats and other apps. The weekly breakdown comes from your Claude account.")
+            : L("Shared by web, desktop and Claude Code. Sources are estimated from Claude Code activity on this Mac; web chat tokens and costs are not available.")
+    }
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            Label(title, systemImage: "chart.xyaxis.line")
+                .font(.system(size: 12, weight: .semibold))
+            if showsInsights { InfoGlyph(text: sharedNote) }
+            Spacer()
+            if dashboard.claudeQuotaHistory.count > 1 {
+                QuotaWindowSwitch(series: dashboard.claudeQuotaHistory, selected: $selected)
+            }
+        }
+    }
+
+    /// The earlier layout, unchanged.
+    private var classicLayout: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            header
+            if let lane = lane, let series = series, let last = lane.samples.last {
+                summary(lane, last: last)
+                navigation
+                chart(series)
+                if official == nil { legend(lane) }
+            } else {
+                Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            if let official = official {
+                Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5)
+                ClaudeProductBreakdownView(breakdown: official)
+            }
+            if let credit = dashboard.claudeIncludedCredit {
+                ClaudeIncludedCreditView(credit: credit)
+            }
+            Text(official != nil
+                 ? L("Shared by Claude Code, Cowork, chats and other apps. The weekly breakdown comes from your Claude account.")
+                 : L("Shared by web, desktop and Claude Code. Sources are estimated from Claude Code activity on this Mac; web chat tokens and costs are not available."))
+                .font(.system(size: 10)).foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if series != nil, let notice = dashboard.claudeQuotaHistoryNotice {
+                Text(notice).font(.system(size: 10)).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    /// One headline with two supporting figures, the chart on its own
+    /// panel, then the breakdown. Explanations sit behind info glyphs.
+    private var insightsLayout: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            if let lane = lane, let series = series, let last = lane.samples.last {
+                QuotaTrendHero(title: lane.title, last: last, pace: pace, isWeekly: isWeekly, now: now)
+                insightChart(series)
+                footer(lane)
+            } else {
+                Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
+                    .font(.system(size: 11)).foregroundColor(.secondary)
+            }
+        }
+    }
+
+    /// The 5-hour allowance, where the quota went, and any notice.
+    private func footer(_ lane: ClaudeQuotaSeries) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !isWeekly, let weekly = weeklyLane, let fiveHour = fiveHourLane {
+                QuotaAllowanceFigures(fiveHour: fiveHour, weekly: weekly, now: now)
+            }
+            if let official = official {
+                ClaudeProductBreakdownView(breakdown: official)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    DSSectionLabel(title: L("Where it went"), symbol: "chart.pie")
+                    legend(lane)
+                }
+            }
+            if let credit = dashboard.claudeIncludedCredit { ClaudeIncludedCreditView(credit: credit) }
+            if let notice = dashboard.claudeQuotaHistoryNotice {
+                Text(notice).font(.system(size: 10)).foregroundColor(.secondary)
+            }
+        }
     }
 
     /// Visible range, and buttons to step back and forth by one range.
@@ -207,31 +259,7 @@ struct ClaudeQuotaHistoryView: View {
         let weeks = paced ? (lane?.cycles().filter { $0.overlaps(range) } ?? []) : []
         let windows = paced ? (fiveHourLane?.cycles().filter { $0.overlaps(range) } ?? []) : []
         return VStack(alignment: .leading, spacing: 4) {
-            // Per-segment source coloring is an estimate; when the
-            // account reports the official breakdown, show that instead.
-            GeometryReader { geometry in
-                ZStack(alignment: .topLeading) {
-                    ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
-                                    longGap: longGap,
-                                    showsLatest: series.samples.last == lane?.samples.last
-                                        && range.contains(series.samples.last?.timestamp ?? .distantPast),
-                                    showsSources: official == nil,
-                                    companion: weekly?.within(range).thinned(bucket: range.duration / 400))
-                        .equatable()
-                    if showsInsights {
-                        QuotaPaceOverlay(cycles: weeks, pace: range.end >= now.addingTimeInterval(-60) ? pace : nil,
-                                         scale: scale, now: now)
-                            .equatable()
-                    }
-                    if dragStartPan == nil, let pointer = pointer {
-                        QuotaHoverReadout(series: series, scale: scale, pointer: pointer)
-                    }
-                }
-                .background(ChartPointerReader(
-                    onScroll: { deltaX in scroll(by: deltaX / max(1, geometry.size.width - 32) * range.duration) },
-                    onHover: { pointer = $0 }))
-                .gesture(drag(plotWidth: max(1, geometry.size.width - 32)))
-            }
+            plotArea(series, scale: scale, longGap: longGap, weekly: weekly, weeks: weeks)
             .frame(height: 128)
             QuotaRecordedStrip(spans: spans, scale: scale)
             if !cycles.isEmpty { QuotaCycleStrip(cycles: cycles, scale: scale, now: now) }
@@ -244,6 +272,68 @@ struct ClaudeQuotaHistoryView: View {
             }
             if let weekly = weekly { fiveHourAllowance(weekly) }
         }
+    }
+
+    /// The curve with its overlays, hover readout, scrolling and dragging.
+    private func plotArea(_ series: ClaudeQuotaSeries, scale: QuotaTrendScale, longGap: TimeInterval,
+                          weekly: ClaudeQuotaSeries?, weeks: [ClaudeQuotaSeries.Cycle]) -> some View {
+        // Per-segment source coloring is an estimate; when the
+        // account reports the official breakdown, show that instead.
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
+                                longGap: longGap,
+                                showsLatest: series.samples.last == lane?.samples.last
+                                    && range.contains(series.samples.last?.timestamp ?? .distantPast),
+                                showsSources: official == nil,
+                                companion: weekly?.within(range).thinned(bucket: range.duration / 400))
+                    .equatable()
+                if showsInsights {
+                    QuotaPaceOverlay(cycles: weeks, pace: range.end >= now.addingTimeInterval(-60) ? pace : nil,
+                                     scale: scale, now: now)
+                        .equatable()
+                }
+                if dragStartPan == nil, let pointer = pointer {
+                    QuotaHoverReadout(series: series, scale: scale, pointer: pointer)
+                }
+            }
+            .background(ChartPointerReader(
+                onScroll: { deltaX in scroll(by: deltaX / max(1, geometry.size.width - 32) * range.duration) },
+                onHover: { pointer = $0 }))
+            .gesture(drag(plotWidth: max(1, geometry.size.width - 32)))
+        }
+    }
+
+    /// The chart on an inset panel: range and navigation, the plot, labeled
+    /// lanes under it, the axis, the 5-hour windows of a week, and a key.
+    private func insightChart(_ series: ClaudeQuotaSeries) -> some View {
+        let scale = QuotaTrendScale(range: range)
+        let longGap = ClaudeQuotaSeries.longGap(over: range)
+        let spans = series.recordedSpans(maxGap: longGap)
+        let weekly = isWeekly ? nil : weeklyLane
+        let cycles = weekly?.cycles().filter { $0.overlaps(range) } ?? []
+        let weeks = isWeekly ? (lane?.cycles().filter { $0.overlaps(range) } ?? []) : []
+        let windows = isWeekly ? (fiveHourLane?.cycles().filter { $0.overlaps(range) } ?? []) : []
+        return VStack(alignment: .leading, spacing: 6) {
+            navigation
+            plotArea(series, scale: scale, longGap: longGap, weekly: weekly, weeks: weeks)
+                .frame(height: 140)
+            VStack(spacing: 5) {
+                QuotaRecordedStrip(spans: spans, scale: scale).laneLabel(L("Logged"))
+                if !cycles.isEmpty {
+                    QuotaCycleStrip(cycles: cycles, scale: scale, now: now).laneLabel(L("Week"))
+                }
+            }
+            QuotaTimeAxis(scale: scale, now: now, daily: isWeekly)
+            if isWeekly {
+                QuotaWindowBars(windows: windows, scale: scale).equatable().padding(.top, 8)
+                QuotaPaceKey().padding(.top, 6)
+            } else {
+                QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: weekly != nil).padding(.top, 6)
+            }
+        }
+        .padding(EdgeInsets(top: 10, leading: 10, bottom: 12, trailing: 8))
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
     }
 
     private var weeklyLane: ClaudeQuotaSeries? { dashboard.claudeQuotaHistory.first { $0.id == "weekly" } }

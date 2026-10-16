@@ -2,6 +2,16 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-10-16 跨重置归零、5 小时为主、周额度叠加、订阅日期自动化、按订阅周期计算用量价值
+
+- **跨重置必须从 0 开始**（用户指出曲线把新窗口和上一窗口直接相连）。根因：服务器在重置后约 25 秒仍返回旧窗口（如 10/14 16:40:25 读数的 `resetsAt` 是 16:40:00、67%），旧的 `reset(between:)` 要求 `resetsAt > previous.timestamp`，因此没识别出重置，画了一条从 67% 斜降到 10% 的线。现在改为 `ClaudeQuotaSeries.reset(before:) -> (end, start)`：只要相邻读数不是同一窗口（`!sameWindow`）就算跨窗口；线保持旧值到 `end`（旧窗口 `resetsAt`，夹在两读数之间），落到 0，保持 0 到 `start`（新窗口开始 = 新 `resetsAt` − 窗口长度），再从 0 升到新读数。“重置”标记用 `hasReset(before:)`：前一读数没有 `resetsAt`（空闲账号，usedPercent 0）时开始新窗口不算重置、不画标记。本机历史里 `resetsAt` 为 nil 的读数约占 12%，都是 0%。
+- **概览始终显示 5 小时额度**：`ProviderSnapshot.headlineQuotaWindow` 对所有服务商都优先取 `windowMinutes≈300` 的窗口，没有时才退回用量最高的窗口（z.ai 仍退回 primary）。原先 Claude 取的是用量最高的窗口（常为每周），而倒计时取的是第一条（5 小时），两者不一致。菜单概览行按 `windowMinutes` 匹配倒计时；全部服务商汇总用 `[DashboardQuotaLane].headline`。
+- **订阅日期**：`GET https://api.anthropic.com/api/oauth/profile`（同一个 Claude Code token、同样的头）返回 `organization.subscription_created_at`，但没有续费日期。本账号的这个日期和用户手填的续费日不是同一天（大概率是换套餐后周期变了），所以它只作最低优先级的估算：优先级为服务商日期 → 手填 → 按订阅开始日按月推算（标注“按订阅开始日推算”，仍可编辑覆盖）。profile 每 24 小时最多读一次，和 usage 一起只在查看 Claude 时请求。
+- **手填日期自动顺延**：账号仍有额度（`!dashboard.quotas.isEmpty`）时，已过的手填日期按整月顺延（从原日期计月，31 号不漂移），标注“手动 · 已顺延到下个月”；没有额度时保持原日期并显示已过期。按需计算，不写回 UserDefaults。入口是 `ProviderDashboard.subscriptionTiming(manual:now:)`。
+- **5 小时视图叠加每周额度**（用户要求：看一个周期能用几个 5 小时额度）：同一刻度上画青色（systemTeal）每周用量线，跨周重置同样归零；记录条下方的 `QuotaCycleStrip` 按周期显示每周窗口（相邻周期深浅交替，已过部分加深），红色是用满 100% 的时段（`Cycle.exhausted` 可有多段，因为服务器会把用满的周额度又降回去：10/13 曾到 100%，10/14 降到约 50%）。下方显示“一周约等于 N 个满 5 小时额度 · 本周还剩约 M 个”：`fiveHourWindowsPerWeek` 取最近一个周用量 ≥20 点的周期，比较两条线在该周期内的消耗（`consumedPoints`），两条线是同一时刻采样。本机数据约 4.5 个（近 7 天 4.5、近 21 天 6.5，比值随时间和套餐变化，所以只用最近一个周期）。
+- **用量价值按订阅周期**：`ProviderUsageValueCard` 有订阅日期时，从当前订阅月（`billingCycle`，与每周趋势相同）的第一个自然日开始算费用和模型（`CostHistoryPayload.costEstimate(since:)` / `modelUsage(since:)`，日数据存在 `dashboard.usageCostHistory`），标题变为“本订阅周期”，并显示“自 … 起”；没有日期时仍为近 30 天。菜单栏/指标里的 30 天 token 数字未改。
+- 验证：全部 contract、cost/quota/subscription/usage-value 回归（新增跨重置、陈旧读数、空闲后开窗、周期与每周估算、顺延、估算优先级、周期费用用例）、视觉 5 项 PASS，画廊浅/深色截图已人工检查。Swift 5.6 对 `QuotaCycleStrip.body` 会类型检查超时，已拆成 `band`/`usedUp`。`build_local_validation.sh`（Universal 2、macOS 12、deep codesign、65-provider offline smoke）通过，已用 `install_local.sh` 安装为 /Applications/AIUsageBar.app（build 202610161030，引擎和 Sparkle 复用旧安装，ad-hoc 签名），上一版备份在 `/private/tmp/aiusagebar-install-backup.jICMHx/AIUsageBar.app`，安装后已重新启动。已提交到 main，未推送。
+
 ## 2026-10-12 README 展示截图
 
 - README.md（英文）和 README.zh-CN.md 顶部是展示区：首图为菜单概览和菜单栏额度环，下面是“Highlights / 界面一览”，每节配截图。图片用 `<picture>` 按 GitHub 主题切换浅色/深色。原来的改名提示和技术说明移到“What's included / 交付范围”下面。

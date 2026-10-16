@@ -85,11 +85,26 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
             next.usedPercent >= previous.usedPercent
     }
 
-    /// When the window of `previous` ended between the two readings, if known.
-    static func reset(between previous: ClaudeQuotaSample, _ next: ClaudeQuotaSample) -> Date? {
-        guard let resetsAt = previous.resetsAt, !sameWindow(resetsAt, next.resetsAt),
-              resetsAt > previous.timestamp, resetsAt <= next.timestamp.addingTimeInterval(300) else { return nil }
-        return min(resetsAt, next.timestamp)
+    /// How the line passes between the readings at `index - 1` and `index`
+    /// when they belong to different windows: it holds the old reading until
+    /// `end` (the old window's reset), drops to zero, stays there until `start`
+    /// (the new window's start) and rises from zero to the new reading. A new
+    /// window always starts from zero, so it is never joined to the old one.
+    /// Both times stay between the two readings; nil within one window.
+    func reset(before index: Int) -> (end: Date, start: Date)? {
+        guard index > 0, index < samples.count else { return nil }
+        let previous = samples[index - 1], next = samples[index]
+        guard next.timestamp > previous.timestamp, !Self.sameWindow(previous.resetsAt, next.resetsAt) else { return nil }
+        let start = windowStart(at: index)
+        // A reading taken just after its own reset time still reports the old window.
+        let end = min(max(previous.resetsAt ?? start, previous.timestamp), next.timestamp)
+        return (end, max(start, end))
+    }
+
+    /// Whether a window ended between the readings at `index - 1` and `index`.
+    /// An idle account reports no window, so starting one after that is not a reset.
+    func hasReset(before index: Int) -> Bool {
+        index > 0 && index < samples.count && samples[index - 1].resetsAt != nil && reset(before: index) != nil
     }
 
     /// Readings inside `range`, plus the nearest one on each side so the line
@@ -162,6 +177,84 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
         let start = calendar.date(byAdding: .month, value: -1, to: end) ?? end.addingTimeInterval(-30 * 86_400)
         guard end > now, start <= now else { return DateInterval(start: now.addingTimeInterval(-30 * 86_400), end: now) }
         return DateInterval(start: start, end: end)
+    }
+
+    /// Percentage points consumed between readings inside `range`: rises
+    /// within a window, plus each new window's reading counted from zero.
+    func consumedPoints(in range: DateInterval) -> Double {
+        guard samples.count > 1 else { return 0 }
+        var total = 0.0
+        for index in 1..<samples.count {
+            let previous = samples[index - 1], next = samples[index]
+            guard previous.timestamp >= range.start, next.timestamp <= range.end else { continue }
+            total += reset(before: index) != nil ? next.usedPercent : max(0, next.usedPercent - previous.usedPercent)
+        }
+        return total
+    }
+
+    /// One window of this series, from its start to its reset, with the
+    /// stretches it was used up and how much was used at the last reading.
+    /// The server can lower a used-up window again, so there may be several.
+    struct Cycle: Hashable {
+        let interval: DateInterval
+        let exhausted: [DateInterval]
+        let usedPercent: Double
+    }
+
+    /// The windows with a known reset time, oldest first.
+    func cycles() -> [Cycle] {
+        guard let duration = windowDuration else { return [] }
+        var result: [Cycle] = []
+        var group: [ClaudeQuotaSample] = []
+        func flush() {
+            guard let resetsAt = group.last?.resetsAt, let last = group.last else { return }
+            // From the first reading at 100% to the next one below it, or the reset.
+            var exhausted: [DateInterval] = []
+            var since: Date?
+            for sample in group {
+                if sample.usedPercent >= 100 {
+                    if since == nil { since = sample.timestamp }
+                } else if let start = since {
+                    exhausted.append(DateInterval(start: start, end: max(start, sample.timestamp)))
+                    since = nil
+                }
+            }
+            if let start = since { exhausted.append(DateInterval(start: start, end: max(start, resetsAt))) }
+            result.append(Cycle(interval: DateInterval(start: resetsAt.addingTimeInterval(-duration), end: resetsAt),
+                                exhausted: exhausted, usedPercent: last.usedPercent))
+        }
+        for sample in samples where sample.resetsAt != nil {
+            if let last = group.last, !Self.sameWindow(last.resetsAt, sample.resetsAt) {
+                flush()
+                group = []
+            }
+            group.append(sample)
+        }
+        flush()
+        return result
+    }
+
+    /// How many full five-hour windows one weekly window holds, from the most
+    /// recent weekly window with at least `minimumWeekly` points used, and how
+    /// many are left in the current one. Both lanes are read at the same
+    /// times, so their consumption over a window compares directly.
+    static func fiveHourWindowsPerWeek(fiveHour: ClaudeQuotaSeries, weekly: ClaudeQuotaSeries,
+                                       now: Date = Date(), minimumWeekly: Double = 20)
+        -> (perWeek: Double, remaining: Double, fromCurrent: Bool)?
+    {
+        let cycles = weekly.cycles()
+        guard let current = cycles.last, let latest = weekly.samples.last else { return nil }
+        for cycle in cycles.reversed() {
+            let span = DateInterval(start: cycle.interval.start, end: min(cycle.interval.end, now))
+            let weeklyPoints = weekly.consumedPoints(in: span)
+            let fiveHourPoints = fiveHour.consumedPoints(in: span)
+            guard weeklyPoints >= minimumWeekly, fiveHourPoints > 0 else { continue }
+            let perWeek = fiveHourPoints / weeklyPoints
+            // A window whose reset has passed with no newer reading is spent anew.
+            let used = current.interval.end > now ? latest.usedPercent : 0
+            return (perWeek, max(0, 100 - used) / 100 * perWeek, cycle == current)
+        }
+        return nil
     }
 
     /// The server reports a window's reset time with a few seconds of drift

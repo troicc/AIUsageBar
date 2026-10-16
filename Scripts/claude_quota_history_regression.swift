@@ -54,11 +54,31 @@ struct ClaudeQuotaHistoryRegression {
             ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end),
             ClaudeQuotaSample(timestamp: end, usedPercent: 40, resetsAt: end),
         ] { precondition(!ClaudeQuotaSeries.connects(before, after), "reset/decrease/missing interval must break chart") }
-        // Across a reset the chart drops at the old window's reset time.
-        precondition(ClaudeQuotaSeries.reset(between: before, ClaudeQuotaSample(
-            timestamp: end.addingTimeInterval(4000), usedPercent: 5, resetsAt: end.addingTimeInterval(7200))) == end)
-        precondition(ClaudeQuotaSeries.reset(between: before, ClaudeQuotaSample(
-            timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end)) == nil, "same window has no reset")
+        // Across a reset the chart drops at the old window's reset time and
+        // rises from zero once the new window starts.
+        func pair(_ next: ClaudeQuotaSample, after first: ClaudeQuotaSample = before) -> ClaudeQuotaSeries {
+            ClaudeQuotaSeries(id: "five-hour", title: "5 hours", samples: [first, next])
+        }
+        let crossed = pair(ClaudeQuotaSample(timestamp: end.addingTimeInterval(4000), usedPercent: 5,
+                                             resetsAt: end.addingTimeInterval(18400)))
+        precondition(crossed.reset(before: 1)?.end == end && crossed.reset(before: 1)?.start == end.addingTimeInterval(400)
+                     && crossed.hasReset(before: 1), "drop at the old reset, rise from the new window's start")
+        precondition(pair(ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(4000), usedPercent: 40, resetsAt: end))
+            .reset(before: 1) == nil, "same window has no reset")
+        // A reading taken seconds after its own reset still shows the old
+        // window; the next window must still start from zero, not join it.
+        let stale = ClaudeQuotaSample(timestamp: end.addingTimeInterval(25), usedPercent: 67, resetsAt: end)
+        let afterStale = pair(ClaudeQuotaSample(timestamp: end.addingTimeInterval(2800), usedPercent: 10,
+                                                resetsAt: end.addingTimeInterval(18000)), after: stale)
+        precondition(afterStale.reset(before: 1)?.end == stale.timestamp && afterStale.reset(before: 1)?.start == stale.timestamp
+                     && afterStale.hasReset(before: 1), "a stale reading is followed by a drop to zero")
+        // An idle account reports no window; a window starting after that
+        // stays at zero until it starts, and is not marked as a reset.
+        let idle = ClaudeQuotaSample(timestamp: end, usedPercent: 0, resetsAt: nil)
+        let woke = pair(ClaudeQuotaSample(timestamp: end.addingTimeInterval(7200), usedPercent: 4,
+                                          resetsAt: end.addingTimeInterval(7200 + 16200)), after: idle)
+        precondition(woke.reset(before: 1)?.start == end.addingTimeInterval(5400) && !woke.hasReset(before: 1),
+                     "a window after idle rises from its own start without a reset marker")
         let gapSeries = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
             ClaudeQuotaSample(timestamp: secondTime, usedPercent: 50, resetsAt: end),
             ClaudeQuotaSample(timestamp: secondTime.addingTimeInterval(1800), usedPercent: 51, resetsAt: end),
@@ -145,6 +165,40 @@ struct ClaudeQuotaHistoryRegression {
         precondition(lateReset.windowStart(at: 1) == t0, "window start never precedes the previous sample")
         precondition(ClaudeQuotaSeries(id: "other", title: "Other", samples: resetSeries.samples)
             .windowStart(at: 1) == resetSeries.samples[1].timestamp, "unknown window falls back to the sample")
+        // Weekly windows and how many full 5-hour windows one holds. Both
+        // lanes are read at the same times.
+        let weekEnd = t0.addingTimeInterval(7 * 86400)
+        var fiveHourSamples: [ClaudeQuotaSample] = [], weeklySamples: [ClaudeQuotaSample] = []
+        for hour in 0..<20 {
+            // Each 5-hour window is used up (0 → 100) and adds 25 weekly points.
+            let time = t0.addingTimeInterval(Double(hour) * 3600)
+            let window = Double(hour / 5), step = Double(hour % 5)
+            fiveHourSamples.append(ClaudeQuotaSample(timestamp: time, usedPercent: step * 25,
+                                                     resetsAt: t0.addingTimeInterval((window + 1) * 5 * 3600)))
+            weeklySamples.append(ClaudeQuotaSample(timestamp: time, usedPercent: min(100, window * 25 + step * 6.25),
+                                                   resetsAt: weekEnd))
+        }
+        let fiveHourLane = ClaudeQuotaSeries(id: "five-hour", title: "5 hours", samples: fiveHourSamples)
+        let weeklyLane = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: weeklySamples)
+        let weekCycles = weeklyLane.cycles()
+        precondition(weekCycles.count == 1 && weekCycles[0].interval == DateInterval(start: t0, end: weekEnd)
+                     && weekCycles[0].exhausted == [DateInterval(start: t0.addingTimeInterval(19 * 3600), end: weekEnd)],
+                     "one weekly window, used up from its 20th hour to its reset")
+        let lowered = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: [
+            ClaudeQuotaSample(timestamp: t0, usedPercent: 100, resetsAt: weekEnd),
+            ClaudeQuotaSample(timestamp: t0.addingTimeInterval(3600), usedPercent: 60, resetsAt: weekEnd),
+        ]).cycles()
+        precondition(lowered[0].exhausted == [DateInterval(start: t0, end: t0.addingTimeInterval(3600))],
+                     "a used-up week the server lowers again ends its stretch")
+        let allowance = ClaudeQuotaSeries.fiveHourWindowsPerWeek(fiveHour: fiveHourLane, weekly: weeklyLane,
+                                                                 now: t0.addingTimeInterval(20 * 3600))!
+        let lastWeekly = weeklySamples.last!.usedPercent
+        precondition(abs(allowance.perWeek - (fiveHourLane.consumedPoints(in: weekCycles[0].interval) / lastWeekly)) < 0.001
+                     && allowance.fromCurrent, "per week compares the two lanes' consumption")
+        precondition(abs(allowance.remaining - (100 - lastWeekly) / 100 * allowance.perWeek) < 0.001)
+        precondition(ClaudeQuotaSeries.fiveHourWindowsPerWeek(fiveHour: fiveHourLane, weekly: ClaudeQuotaSeries(
+            id: "weekly", title: "Weekly", samples: Array(weeklySamples.prefix(3))), now: t0.addingTimeInterval(3 * 3600)) == nil,
+                     "too little weekly use gives no estimate")
         // Official account usage: per-product weekly breakdown and the
         // included credit (the window that carries dollar amounts).
         let accountJSON = Data("""
@@ -158,6 +212,11 @@ struct ClaudeQuotaHistoryRegression {
         precondition(account?.breakdown?.rows.map(\.key) == ["claude_code", "chat", "cowork", "other"])
         precondition(account?.breakdown?.rows.first { $0.key == "cowork" }?.percent == 74)
         precondition(account?.breakdown?.windowStartedAt != nil && account?.breakdown?.asOf != nil)
+        let profile = Data(#"{"organization":{"billing_type":"stripe_subscription","subscription_created_at":"2026-01-05T08:15:30.250000Z"}}"#.utf8)
+        let profileStart = ClaudeAccountUsage.subscriptionStart(fromProfile: profile)
+        precondition(profileStart.map { abs($0.timeIntervalSince(ISO8601DateFormatter().date(from: "2026-01-05T08:15:30Z")!)) < 1 } == true,
+                     "profile subscription start")
+        precondition(ClaudeAccountUsage.subscriptionStart(fromProfile: Data(#"{"organization":{"subscription_created_at":null}}"#.utf8)) == nil)
         precondition(account?.includedCredit == ClaudeIncludedCredit(limitDollars: 250, remainingDollars: 250,
             expiresAt: FlexibleDate.iso8601("2026-11-05T07:59:00+00:00")))
         precondition(ClaudeAccountUsage.parse(Data("{\"five_hour\":{\"utilization\":1}}".utf8)) == nil)

@@ -206,7 +206,9 @@ extension L10nTable {
         "Expires": "到期",
         "Renews": "续费",
         "Date": "日期",
-        "Saved for this account. Update after renewal.": "仅为此账号保存。续费后请更新。",
+        "Saved for this account. Moves to the same day next month while the plan still has quota.": "仅为此账号保存。到期后只要仍有额度，会自动顺延到下个月同一天。",
+        "Manual · moved to next month": "手动 · 已顺延到下个月",
+        "Estimated from subscription start": "按订阅开始日推算",
         "Clear": "清除",
         "Save": "保存",
         // Settings redesign: sidebar, page descriptions and new rows

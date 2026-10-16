@@ -130,22 +130,22 @@ struct ProviderSnapshot: Decodable, Hashable, Identifiable {
     }
 
     /// The single quota that should represent this provider in compact UI.
-    /// z.ai exposes both its main five-hour allowance and secondary MCP/monthly
-    /// windows. The main menu must not let a small MCP percentage replace the
-    /// five-hour value simply because it happens to be numerically larger.
+    /// The five-hour window always wins when there is one: the countdown shown
+    /// beside it is that window's reset, and a nearly spent weekly or MCP
+    /// window must not replace it simply because it is numerically larger.
     var headlineQuotaWindow: RateWindow? {
         guard provider != "deepseek" else { return nil }
         let windows = [usage?.primary, usage?.secondary, usage?.tertiary].compactMap { $0 }
-        guard provider == "zai" else {
-            return windows.max {
-                ($0.usedPercent ?? -1) < ($1.usedPercent ?? -1)
-            }
-        }
         if let fiveHour = windows.first(where: { window in
             guard let minutes = window.windowMinutes else { return false }
             return abs(minutes - 300) <= 1
         }) {
             return fiveHour
+        }
+        guard provider == "zai" else {
+            return windows.max {
+                ($0.usedPercent ?? -1) < ($1.usedPercent ?? -1)
+            }
         }
         // Older engine payloads omit windowMinutes but put the main allowance
         // in primary. Secondary is commonly MCP and is not a safe fallback.

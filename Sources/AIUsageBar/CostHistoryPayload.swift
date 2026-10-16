@@ -52,8 +52,17 @@ struct CostHistoryPayload: Codable, Hashable {
     var last30DaysCostEstimate: CostEstimateSummary { costEstimate(dayCount: 30) }
 
     func modelUsage(dayCount: Int = 30, now: Date = Date(), calendar: Calendar = .current) -> [ModelUsageSummary] {
+        Self.modelUsage(days(inLast: dayCount, now: now, calendar: calendar))
+    }
+
+    /// Models used from the calendar day of `start` (a billing cycle's start) through today.
+    func modelUsage(since start: Date, now: Date = Date(), calendar: Calendar = .current) -> [ModelUsageSummary] {
+        Self.modelUsage(days(from: calendar.startOfDay(for: start), now: now, calendar: calendar))
+    }
+
+    private static func modelUsage(_ days: [CostHistoryDay]) -> [ModelUsageSummary] {
         var groups: [String: [CostModelBreakdown]] = [:]
-        for day in days(inLast: dayCount, now: now, calendar: calendar) {
+        for day in days {
             if let rows = day.reconciledModels {
                 for row in rows {
                     let name = row.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,6 +94,14 @@ struct CostHistoryPayload: Codable, Hashable {
         return CostEstimateSummary(days: days(inLast: dayCount, now: now, calendar: calendar))
     }
 
+    /// Cost from the calendar day of `start` (a billing cycle's start) through today.
+    func costEstimate(since start: Date, now: Date = Date(), calendar: Calendar = .current) -> CostEstimateSummary {
+        guard daily != nil else {
+            return CostEstimateSummary(knownCost: nil, unpricedModels: [], hasUnattributedCost: true)
+        }
+        return CostEstimateSummary(days: days(from: calendar.startOfDay(for: start), now: now, calendar: calendar))
+    }
+
     /// Ranking is by token volume, independent of price availability.
     var topModel: String? { topModel(dayCount: 10) }
 
@@ -110,6 +127,10 @@ struct CostHistoryPayload: Codable, Hashable {
         guard count > 0,
               let cutoff = calendar.date(byAdding: .day, value: 1 - count, to: calendar.startOfDay(for: now))
         else { return [] }
+        return days(from: cutoff, now: now, calendar: calendar)
+    }
+
+    private func days(from cutoff: Date, now: Date, calendar: Calendar) -> [CostHistoryDay] {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.locale = Locale(identifier: "en_US_POSIX")

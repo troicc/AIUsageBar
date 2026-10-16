@@ -80,12 +80,12 @@ struct AllProvidersContentView: View {
                                    startPoint: .topLeading, endPoint: .bottomTrailing))
     }
 
-    /// One ring per provider for its tightest window: the at-a-glance row.
+    /// One ring per provider for its headline window: the at-a-glance row.
     private var summaryStrip: some View {
         DSCard(padding: 12) {
             HStack(alignment: .top, spacing: 0) {
                 ForEach(entries.prefix(6)) { entry in
-                    let lane = entry.dashboard.quotas.min { $0.remainingPercent < $1.remainingPercent }
+                    let lane = entry.dashboard.quotas.headline
                     VStack(spacing: 6) {
                         ZStack(alignment: .bottomTrailing) {
                             UsageRing(remaining: lane?.remainingPercent, size: 54, lineWidth: 5.5)
@@ -200,7 +200,7 @@ struct AllProviderCard: View {
                     .font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
             }
             Spacer()
-            if let lane = dashboard.quotas.min(by: { $0.remainingPercent < $1.remainingPercent }) {
+            if let lane = dashboard.quotas.headline {
                 UsageRing(remaining: lane.remainingPercent, size: 50, lineWidth: 5)
                     .help(lane.title)
             }

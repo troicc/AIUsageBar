@@ -222,7 +222,10 @@ private struct MenuMock: View {
             NativeMenuOverviewView(
                 rows: snapshots.map { snapshot -> NativeMenuOverviewRow in
                     let dashboard = dashboards[snapshot.id] ?? DashboardParser.dashboard(snapshot: snapshot)
-                    let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel } ?? dashboard.quotas.first
+                    let window = snapshot.headlineQuotaWindow
+                    let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel }
+                        ?? dashboard.quotas.first { $0.windowMinutes != nil && $0.windowMinutes == window?.windowMinutes }
+                        ?? dashboard.quotas.first
                     return NativeMenuOverviewRow(id: snapshot.id, providerID: snapshot.provider, title: snapshot.displayName,
                                           account: snapshot.accountDisplayName, usedPercent: snapshot.headlineUsedPercent,
                                           quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel, health: snapshot.serviceHealth,

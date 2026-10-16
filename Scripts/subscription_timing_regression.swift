@@ -29,6 +29,36 @@ struct SubscriptionTimingRegression {
         let renewal = SubscriptionTiming.resolve(expires: nil, renews: manual.date, manual: "")!
         precondition(renewal.kind == .renews && !renewal.isManual)
         precondition(renewal.status(now: manual.date.addingTimeInterval(1)) == "Renewal date passed")
+        // While the plan still has quota, a passed manual date moves on by
+        // whole months, counted from the date entered.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let entered = "expires|2026-01-31"
+        let anchor = SubscriptionTiming.resolve(expires: nil, renews: nil, manual: entered)!.date
+        func day(_ y: Int, _ m: Int, _ d: Int, hour: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: y, month: m, day: d, hour: hour))!
+        }
+        let rolled = SubscriptionTiming.resolve(expires: nil, renews: nil, manual: entered, active: true,
+                                                now: day(2026, 3, 1, hour: 9), calendar: calendar)!
+        precondition(rolled.date == day(2026, 3, 31) && rolled.rolledForward && rolled.isManual && rolled.kind == .expires,
+                     "the 31st stays the 31st after a short month")
+        let sameDay = SubscriptionTiming.resolve(expires: nil, renews: nil, manual: entered, active: true,
+                                                 now: day(2026, 1, 31, hour: 20), calendar: calendar)!
+        precondition(sameDay.date == anchor && !sameDay.rolledForward, "the day itself is not moved")
+        let lapsed = SubscriptionTiming.resolve(expires: nil, renews: nil, manual: entered, active: false,
+                                                now: day(2026, 3, 1), calendar: calendar)!
+        precondition(lapsed.date == anchor && lapsed.status(now: day(2026, 3, 1)) == "Expiry date passed",
+                     "without quota the entered date stays passed")
+        // Without any date, renewals are estimated monthly from the subscription start.
+        let started = ISO8601DateFormatter().date(from: "2026-01-05T08:15:30Z")!
+        let estimate = SubscriptionTiming.resolve(expires: nil, renews: nil, manual: "", started: started,
+                                                  now: started.addingTimeInterval(45 * 86400), calendar: calendar)!
+        precondition(estimate.isEstimated && estimate.kind == .renews && !estimate.isManual
+                     && estimate.date == calendar.date(byAdding: .month, value: 2, to: started)!)
+        precondition(SubscriptionTiming.resolve(expires: nil, renews: nil, manual: "renews|2026-10-14", started: started,
+                                                now: started)?.isManual == true, "an entered date beats the estimate")
+        precondition(SubscriptionTiming.resolve(expires: manual.date, renews: nil, manual: "", started: started)?.isEstimated == false,
+                     "a reported date beats the estimate")
         let other = try snapshot("{}", account: "b@example.com")
         precondition(SubscriptionTiming.preferenceKey(for: expiry) != SubscriptionTiming.preferenceKey(for: other))
         let suite = "subscription-regression.\(UUID().uuidString)"

@@ -664,7 +664,10 @@ final class MenuController: NSObject, NSMenuDelegate {
     private func overviewRows() -> [NativeMenuOverviewRow] {
         let rows = store.snapshots.map { snapshot -> NativeMenuOverviewRow in
             let dashboard = store.dashboard(for: snapshot)
-            let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel } ?? dashboard.quotas.first
+            let window = snapshot.headlineQuotaWindow
+            let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel }
+                ?? dashboard.quotas.first { $0.windowMinutes != nil && $0.windowMinutes == window?.windowMinutes }
+                ?? dashboard.quotas.first
             let balance = dashboard.metrics.first { $0.id == "balance" && !DS.isPlaceholder($0) }?.value
             return NativeMenuOverviewRow(
                 id: snapshot.id,

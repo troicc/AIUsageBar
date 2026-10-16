@@ -112,6 +112,17 @@ struct ModelAttributionVisualQA {
                     modelsExpanded: true).padding(12)
             }, size: NSSize(width: 362, height: 460), appearance: appearance,
                 output: output.appendingPathComponent("claude-local-value-\(mode).png"))
+            // With a subscription date the value counts from the cycle's start.
+            let cycleKey = entries[1].dashboard.subscriptionDatePreferenceKey!
+            let cycleStart = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+            defaults.set(SubscriptionTiming.encode(date: cycleStart, kind: .renews), forKey: cycleKey)
+            try render(ScrollView {
+                ProviderUsageValueCard(dashboard: entries[1].dashboard,
+                    preferenceKey: entries[1].dashboard.subscriptionPreferenceKey!, defaults: defaults,
+                    modelsExpanded: true).padding(12)
+            }, size: NSSize(width: 362, height: 460), appearance: appearance,
+                output: output.appendingPathComponent("claude-local-value-cycle-\(mode).png"))
+            defaults.removeObject(forKey: cycleKey)
             for state in ["automatic", "manual", "missing", "editor"] {
                 var timingDashboard = codexDashboard
                 let key = "subscription-visual-" + state

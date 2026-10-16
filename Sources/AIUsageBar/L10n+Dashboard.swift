@@ -61,6 +61,11 @@ extension L10nTable {
         // Usage value
         "Local usage value · 30d": "本地用量价值 · 30 天",
         "Usage value · 30d": "用量价值 · 30 天",
+        "Local usage value · this billing cycle": "本地用量价值 · 本订阅周期",
+        "Usage value · this billing cycle": "用量价值 · 本订阅周期",
+        "Since %@ · resets with the subscription": "自 %@ 起 · 随订阅周期重新计算",
+        "Models · this cycle (%d)": "模型 · 本周期（%d）",
+        "No model breakdown available for this billing cycle.": "本订阅周期没有可用的模型明细。",
         "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account.":
             "仅统计本地 Claude Code 日志，不含网页聊天。API 等价费用 ÷ 月费，并非订阅的全部价值，也不是账单。日志无法核实计费账号。",
         "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account.":

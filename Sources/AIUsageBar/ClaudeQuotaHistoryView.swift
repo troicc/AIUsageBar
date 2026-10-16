@@ -40,11 +40,10 @@ struct ClaudeQuotaHistoryView: View {
 
     private var isWeekly: Bool { lane?.id == "weekly" }
 
-    /// Renewal or expiry date, from the account or entered in the subscription card.
+    /// Renewal or expiry date, from the account, the subscription card or the subscription start.
     private var subscriptionDate: Date? {
         let manual = dashboard.subscriptionDatePreferenceKey.flatMap { UserDefaults.standard.string(forKey: $0) } ?? ""
-        return SubscriptionTiming.resolve(expires: dashboard.subscriptionExpiresAt,
-                                          renews: dashboard.subscriptionRenewsAt, manual: manual)?.date
+        return dashboard.subscriptionTiming(manual: manual, now: now)?.date
     }
 
     /// The weekly lane spans the current subscription month; the 5-hour lane the last day.
@@ -174,6 +173,9 @@ struct ClaudeQuotaHistoryView: View {
         let scale = QuotaTrendScale(range: range)
         let longGap = ClaudeQuotaSeries.longGap(over: range)
         let spans = series.recordedSpans(maxGap: longGap)
+        // The 5-hour view also shows the weekly window it draws from.
+        let weekly = isWeekly ? nil : weeklyLane
+        let cycles = weekly?.cycles().filter { $0.interval.intersects(range) } ?? []
         return VStack(alignment: .leading, spacing: 4) {
             // Per-segment source coloring is an estimate; when the
             // account reports the official breakdown, show that instead.
@@ -183,7 +185,8 @@ struct ClaudeQuotaHistoryView: View {
                                     longGap: longGap,
                                     showsLatest: series.samples.last == lane?.samples.last
                                         && range.contains(series.samples.last?.timestamp ?? .distantPast),
-                                    showsSources: official == nil)
+                                    showsSources: official == nil,
+                                    companion: weekly?.within(range).thinned(bucket: range.duration / 400))
                         .equatable()
                     if dragStartPan == nil, let pointer = pointer {
                         QuotaHoverReadout(series: series, scale: scale, pointer: pointer)
@@ -196,8 +199,31 @@ struct ClaudeQuotaHistoryView: View {
             }
             .frame(height: 128)
             QuotaRecordedStrip(spans: spans, scale: scale)
+            if !cycles.isEmpty { QuotaCycleStrip(cycles: cycles, scale: scale, now: now) }
             QuotaTimeAxis(scale: scale, now: now, daily: isWeekly)
-            if spans.count > 1 { QuotaTrendKey().padding(.top, 2) }
+            if spans.count > 1 || weekly != nil {
+                QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: weekly != nil).padding(.top, 2)
+            }
+            if let weekly = weekly { fiveHourAllowance(weekly) }
+        }
+    }
+
+    private var weeklyLane: ClaudeQuotaSeries? { dashboard.claudeQuotaHistory.first { $0.id == "weekly" } }
+
+    /// How many full 5-hour windows a week holds, and how many are left in this one.
+    @ViewBuilder
+    private func fiveHourAllowance(_ weekly: ClaudeQuotaSeries) -> some View {
+        if let fiveHour = dashboard.claudeQuotaHistory.first(where: { $0.id == "five-hour" }),
+           let estimate = ClaudeQuotaSeries.fiveHourWindowsPerWeek(fiveHour: fiveHour, weekly: weekly, now: now)
+        {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(L("One week ≈ %@ full 5-hour windows · about %@ left this week",
+                       String(format: "%.1f", estimate.perWeek), String(format: "%.1f", estimate.remaining)))
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                Text(L(estimate.fromCurrent ? "Estimated from this week's readings" : "Estimated from an earlier week's readings"))
+                    .font(.system(size: 9)).foregroundColor(.secondary)
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -465,6 +491,8 @@ enum QuotaTrendStyle {
     static let hover = Color(nsColor: .systemBlue)
     /// Joins readings across a long stretch with none: the Mac asleep or the app not running.
     static let unrecorded = Color.secondary.opacity(0.55)
+    /// The weekly window shown with the 5-hour one.
+    static let weekly = Color(nsColor: .systemTeal)
 }
 
 /// Quota curve over the trend's range, drawn as one continuous line.
@@ -472,7 +500,7 @@ enum QuotaTrendStyle {
 /// source of each rise. Between them a straight connector joins the readings:
 /// in the brand color after a short gap, gray after a long one (`longGap`). When a
 /// window reset in between, the connector holds the last reading until the
-/// reset, drops to zero, then rises to the next reading.
+/// reset, drops to zero, and rises from zero once the new window starts.
 private struct ClaudeQuotaPlot: View, Equatable {
     let series: ClaudeQuotaSeries
     let scale: QuotaTrendScale
@@ -481,6 +509,8 @@ private struct ClaudeQuotaPlot: View, Equatable {
     /// Whether the last reading is the latest one, marked as the current value.
     var showsLatest = true
     var showsSources = true
+    /// The weekly window, drawn on the same scale under the 5-hour line.
+    var companion: ClaudeQuotaSeries? = nil
 
     private func x(_ date: Date, size: CGSize) -> CGFloat { scale.position(date, width: size.width) }
 
@@ -532,6 +562,11 @@ private struct ClaudeQuotaPlot: View, Equatable {
                 ZStack(alignment: .topLeading) {
                     resetMarkers(geometry.size)
                     area(geometry.size).fill(fill)
+                    if let companion = companion, !companion.samples.isEmpty {
+                        companionLine(companion, size: geometry.size)
+                            .stroke(QuotaTrendStyle.weekly,
+                                    style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                    }
                     ForEach(connectors, id: \.self) { index in
                         connectorView(index, size: geometry.size)
                     }
@@ -578,19 +613,14 @@ private struct ClaudeQuotaPlot: View, Equatable {
     }
 
     private var resetIndices: [Int] {
-        series.samples.indices.dropFirst().filter { index in
-            let previous = series.samples[index - 1], sample = series.samples[index]
-            return !ClaudeQuotaSeries.sameWindow(previous.resetsAt, sample.resetsAt) && sample.usedPercent < previous.usedPercent
-        }
+        series.samples.indices.dropFirst().filter { series.hasReset(before: $0) }
     }
 
     @ViewBuilder
     private func resetMarkers(_ size: CGSize) -> some View {
         ForEach(resetIndices, id: \.self) { index in
-            // The old window's reset time when known (where the line drops),
-            // otherwise the new window's start.
-            let reset = ClaudeQuotaSeries.reset(between: series.samples[index - 1], series.samples[index])
-            let markerX = x(reset ?? series.windowStart(at: index), size: size)
+            // Where the line drops: the old window's reset time.
+            let markerX = x(series.reset(before: index)?.end ?? series.windowStart(at: index), size: size)
             if (0...(size.width - 28)).contains(markerX) { resetMarker(at: markerX, size: size) }
         }
     }
@@ -633,6 +663,25 @@ private struct ClaudeQuotaPlot: View, Equatable {
         }
     }
 
+    /// The companion window as straight segments; across its resets it drops
+    /// to zero and rises again from the new window's start.
+    private func companionLine(_ companion: ClaudeQuotaSeries, size: CGSize) -> Path {
+        Path { path in
+            let zero = y(0, size)
+            for (index, sample) in companion.samples.enumerated() {
+                let next = point(sample, size: size)
+                guard index > 0 else { path.move(to: next); continue }
+                if let reset = companion.reset(before: index) {
+                    let endX = x(reset.end, size: size), startX = x(reset.start, size: size)
+                    path.addLine(to: CGPoint(x: endX, y: path.currentPoint?.y ?? next.y))
+                    path.addLine(to: CGPoint(x: endX, y: zero))
+                    path.addLine(to: CGPoint(x: startX, y: zero))
+                }
+                path.addLine(to: next)
+            }
+        }
+    }
+
     private func line(_ points: [CGPoint], smooth: Bool) -> Path {
         Path { path in
             path.move(to: points[0])
@@ -659,9 +708,9 @@ private struct ClaudeQuotaPlot: View, Equatable {
     private func connectorPoints(_ index: Int, size: CGSize) -> [CGPoint] {
         let previous = series.samples[index - 1], next = series.samples[index]
         let a = point(previous, size: size), b = point(next, size: size)
-        guard let reset = ClaudeQuotaSeries.reset(between: previous, next) else { return [a, b] }
-        let resetX = x(reset, size: size)
-        return [a, CGPoint(x: resetX, y: a.y), CGPoint(x: resetX, y: y(0, size)), b]
+        guard let reset = series.reset(before: index) else { return [a, b] }
+        let endX = x(reset.end, size: size), startX = x(reset.start, size: size), zero = y(0, size)
+        return [a, CGPoint(x: endX, y: a.y), CGPoint(x: endX, y: zero), CGPoint(x: startX, y: zero), b]
     }
 
     @ViewBuilder
@@ -844,12 +893,74 @@ private struct QuotaTimeAxis: View {
     }()
 }
 
-/// Explains the two line colors and the recorded strip.
+/// Weekly windows under the 5-hour chart: each runs from its start to its
+/// reset (teal, stronger up to now), red where it was used up. Neighbors
+/// alternate in strength so the boundary between two weeks stays visible.
+private struct QuotaCycleStrip: View {
+    let cycles: [ClaudeQuotaSeries.Cycle]
+    let scale: QuotaTrendScale
+    let now: Date
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(cycles.enumerated()), id: \.element) { offset, cycle in
+                    band(cycle, offset: offset, width: geometry.size.width)
+                }
+            }
+        }
+        .frame(height: 8)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(L("Weekly window")))
+        .accessibilityValue(Text(cycles.map(Self.describe).joined(separator: "; ")))
+    }
+
+    private func band(_ cycle: ClaudeQuotaSeries.Cycle, offset: Int, width: CGFloat) -> some View {
+        let start: CGFloat = scale.x(cycle.interval.start, width: width) + (offset == 0 ? 0 : 1)
+        let end: CGFloat = max(start, scale.x(cycle.interval.end, width: width) - 1)
+        let elapsed: CGFloat = min(end, max(start, scale.x(now, width: width)))
+        let strength = offset % 2 == 0 ? 0.9 : 0.55
+        return ZStack(alignment: .leading) {
+            Capsule().fill(QuotaTrendStyle.weekly.opacity(0.18)).frame(width: end - start, height: 4)
+            Capsule().fill(QuotaTrendStyle.weekly.opacity(strength)).frame(width: elapsed - start, height: 4)
+            ForEach(cycle.exhausted, id: \.self) { span in
+                usedUp(span, start: start, end: elapsed, width: width)
+            }
+        }
+        .clipShape(Capsule())
+        .frame(width: max(3, end - start), height: 8, alignment: .leading)
+        .contentShape(Rectangle())
+        .position(x: (start + max(start + 3, end)) / 2, y: 4)
+        .help(Self.describe(cycle))
+    }
+
+    /// The part of a used-up stretch inside the band, up to now.
+    private func usedUp(_ span: DateInterval, start: CGFloat, end: CGFloat, width: CGFloat) -> some View {
+        let left: CGFloat = min(end, max(start, scale.x(span.start, width: width)))
+        let right: CGFloat = min(end, max(left, scale.x(span.end, width: width)))
+        return Rectangle().fill(Color(nsColor: .systemRed).opacity(0.7))
+            .frame(width: max(2, right - left), height: 4)
+            .offset(x: left - start)
+    }
+
+    private static func describe(_ cycle: ClaudeQuotaSeries.Cycle) -> String {
+        let style = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(L10n.locale)
+        let span = L("Weekly window %@ – %@", cycle.interval.start.formatted(style), cycle.interval.end.formatted(style))
+        let spent = cycle.exhausted.map { L("Used up %@", $0.start.formatted(style)) }
+        return ([span, L("%@%% used", String(format: "%.0f", cycle.usedPercent))] + spent).joined(separator: " · ")
+    }
+}
+
+/// Explains the line colors and the strips.
 private struct QuotaTrendKey: View {
+    var showsGaps = true
+    var showsWeekly = false
+
     var body: some View {
         HStack(spacing: 14) {
-            item(QuotaSourceStyle.claudeCode, L("Recorded"))
-            item(QuotaTrendStyle.unrecorded, L("No readings, joined"))
+            item(QuotaSourceStyle.claudeCode, showsWeekly ? L("5 hours") : L("Recorded"))
+            if showsGaps { item(QuotaTrendStyle.unrecorded, L("No readings, joined")) }
+            if showsWeekly { item(QuotaTrendStyle.weekly, L("Weekly window")) }
             Spacer()
         }
         .font(.system(size: 9))

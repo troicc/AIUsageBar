@@ -309,6 +309,8 @@ enum DashboardParser {
             subscriptionRenewsAt: snapshot.usage?.subscriptionRenewsAt,
             usageCostEstimate: snapshot.provider == "claude" && rawCostPayload?.daily == nil
                 ? nil : costPayload?.last30DaysCostEstimate,
+            usageCostHistory: snapshot.provider == "claude" && rawCostPayload?.daily == nil
+                ? nil : costPayload,
             modelUsage: costPayload?.modelUsage() ?? [],
             hasClaudeSharedQuota: !snapshot.claudeSharedQuotaWindows.isEmpty)
     }

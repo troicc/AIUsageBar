@@ -210,6 +210,7 @@ final class DashboardStore: ObservableObject {
             self.claudeAccountUsage = usage
             self.dashboards[snapshotID]?.claudeProductBreakdown = usage?.breakdown
             self.dashboards[snapshotID]?.claudeIncludedCredit = usage?.includedCredit
+            self.dashboards[snapshotID]?.subscriptionStartedAt = usage?.subscriptionStartedAt
         }
     }
 
@@ -334,6 +335,7 @@ final class DashboardStore: ObservableObject {
             .map { $0.attributed(activeMinutes: claudeActiveMinutes, since: Date().addingTimeInterval(-86_400)) }
         dashboard.claudeProductBreakdown = claudeAccountUsage?.breakdown
         dashboard.claudeIncludedCredit = claudeAccountUsage?.includedCredit
+        dashboard.subscriptionStartedAt = claudeAccountUsage?.subscriptionStartedAt
         dashboard.claudeQuotaHistoryNotice = snapshot.claudeQuotaAccountKey == nil
             ? L("Account identity unavailable. History starts after this account can be identified.")
             : claudeQuotaHistoryStore.persistenceError

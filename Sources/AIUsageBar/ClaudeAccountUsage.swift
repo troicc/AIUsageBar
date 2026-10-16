@@ -25,6 +25,19 @@ struct ClaudeIncludedCredit: Hashable {
 struct ClaudeAccountUsage: Hashable {
     var breakdown: ClaudeProductBreakdown?
     var includedCredit: ClaudeIncludedCredit?
+    /// When the organization's subscription started (the OAuth profile's
+    /// `subscription_created_at`). Not a renewal date: renewals are estimated
+    /// from it by whole months, and a plan change can move the real cycle.
+    var subscriptionStartedAt: Date?
+
+    /// Reads the subscription start from the Claude OAuth profile response.
+    static func subscriptionStart(fromProfile data: Data) -> Date? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let organization = root["organization"] as? [String: Any],
+              let text = organization["subscription_created_at"] as? String
+        else { return nil }
+        return FlexibleDate.iso8601(text)
+    }
 
     /// Parses the subscription usage response of the Claude OAuth API.
     static func parse(_ data: Data) -> ClaudeAccountUsage? {
@@ -72,32 +85,46 @@ struct ClaudeAccountUsage: Hashable {
 actor ClaudeAccountUsageClient {
     private static let keychainService = "Claude Code-credentials"
     private static let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
+    private static let profileEndpoint = URL(string: "https://api.anthropic.com/api/oauth/profile")!
     /// Fetched only when Claude is being looked at, and at most this often.
     private let cacheLifetime: TimeInterval = 15 * 60
+    /// The subscription start rarely changes; the profile is read once a day.
+    private let profileLifetime: TimeInterval = 24 * 3600
     private var cached: (fetchedAt: Date, usage: ClaudeAccountUsage?)?
+    private var profile: (fetchedAt: Date, startedAt: Date?)?
     private var accessDenied = false
 
     func usage(now: Date = Date()) async -> ClaudeAccountUsage? {
         if let cached = cached, now.timeIntervalSince(cached.fetchedAt) < cacheLifetime {
             return cached.usage
         }
-        guard !accessDenied, let token = readAccessToken(now: now) else { return cached?.usage }
-        var request = URLRequest(url: Self.endpoint, timeoutInterval: 20)
+        guard !accessDenied, let token = readAccessToken(now: now),
+              let data = await get(Self.endpoint, token: token) else { return cached?.usage }
+        var usage = ClaudeAccountUsage.parse(data)
+        if profile.map({ now.timeIntervalSince($0.fetchedAt) >= profileLifetime }) ?? true,
+           let data = await get(Self.profileEndpoint, token: token)
+        {
+            profile = (now, ClaudeAccountUsage.subscriptionStart(fromProfile: data))
+        }
+        if let started = profile?.startedAt {
+            if usage == nil { usage = ClaudeAccountUsage() }
+            usage?.subscriptionStartedAt = started
+        }
+        cached = (now, usage)
+        return usage
+    }
+
+    private func get(_ url: URL, token: String) async -> Data? {
+        var request = URLRequest(url: url, timeoutInterval: 20)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         // Pinned to the Claude Code release installed when this was set
         // (2026-10-09); intentionally not updated automatically.
         request.setValue("claude-code/2.1.295", forHTTPHeaderField: "User-Agent")
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return cached?.usage }
-            let usage = ClaudeAccountUsage.parse(data)
-            cached = (now, usage)
-            return usage
-        } catch {
-            return cached?.usage
-        }
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return data
     }
 
     /// Reads through `/usr/bin/security`, the tool Claude Code itself uses to

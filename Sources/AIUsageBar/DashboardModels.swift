@@ -62,6 +62,34 @@ struct DashboardHistoryPoint: Identifiable, Hashable {
         return result
     }
 }
+extension ProviderDashboard {
+    /// The subscription date to show: reported by the provider, entered for
+    /// this account (moved on while the plan still has quota), or estimated
+    /// from when the subscription started.
+    func subscriptionTiming(manual: String, now: Date = Date()) -> SubscriptionTiming? {
+        SubscriptionTiming.resolve(expires: subscriptionExpiresAt, renews: subscriptionRenewsAt, manual: manual,
+                                   started: subscriptionStartedAt, active: !quotas.isEmpty, now: now)
+    }
+}
+
+extension ProviderDashboard {
+    /// The current subscription month, when a subscription date is known.
+    func billingCycle(manual: String, now: Date = Date()) -> DateInterval? {
+        guard let anchor = subscriptionTiming(manual: manual, now: now)?.date else { return nil }
+        let cycle = ClaudeQuotaSeries.billingCycle(now: now, anchor: anchor)
+        return cycle.end > now ? cycle : nil
+    }
+}
+
+extension Array where Element == DashboardQuotaLane {
+    /// The five-hour window when there is one, like the menu overview;
+    /// otherwise the tightest window.
+    var headline: DashboardQuotaLane? {
+        first { $0.windowMinutes.map { abs($0 - 300) <= 1 } ?? false }
+            ?? self.min { $0.remainingPercent < $1.remainingPercent }
+    }
+}
+
 struct DashboardQuotaLane: Identifiable, Hashable {
     let id: String
     let title: String
@@ -182,7 +210,11 @@ struct ProviderDashboard: Identifiable, Hashable {
     var subscriptionDatePreferenceKey: String? = nil
     var subscriptionExpiresAt: Date? = nil
     var subscriptionRenewsAt: Date? = nil
+    /// When the account's subscription started, for estimating its renewals.
+    var subscriptionStartedAt: Date? = nil
     var usageCostEstimate: CostEstimateSummary? = nil
+    /// Daily local costs behind the usage value, so it can follow the billing cycle.
+    var usageCostHistory: CostHistoryPayload? = nil
     var modelUsage: [ModelUsageSummary] = []
     var hasClaudeSharedQuota = false
     var claudeQuotaHistory: [ClaudeQuotaSeries] = []

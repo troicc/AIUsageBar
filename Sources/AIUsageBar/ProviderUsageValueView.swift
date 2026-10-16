@@ -16,6 +16,8 @@ struct ProviderUsageValueCard: View {
     let dashboard: ProviderDashboard
     @AppStorage private var monthlyFee: String
     @AppStorage private var providerFee: String
+    /// The subscription date entered for this account, which sets the billing cycle.
+    @AppStorage private var subscriptionDate: String
     @ObservedObject private var currency: CurrencySettingsStore
     @State private var modelsExpanded: Bool
     @State private var editingFee = false
@@ -26,6 +28,7 @@ struct ProviderUsageValueCard: View {
         self.dashboard = dashboard
         _monthlyFee = AppStorage(wrappedValue: "", preferenceKey, store: defaults)
         _providerFee = AppStorage(wrappedValue: "", "subscriptionDefaultUSD.\(dashboard.id)", store: defaults)
+        _subscriptionDate = AppStorage(wrappedValue: "", dashboard.subscriptionDatePreferenceKey ?? "", store: defaults)
         self.currency = currency
         _modelsExpanded = State(initialValue: modelsExpanded)
     }
@@ -33,12 +36,44 @@ struct ProviderUsageValueCard: View {
     private var feeText: String { monthlyFee.isEmpty ? providerFee : monthlyFee }
     private var fee: Double? { SubscriptionComparison.monthlyUSD(feeText) }
     private var multiple: Double? {
-        SubscriptionComparison.multiple(estimate: dashboard.usageCostEstimate, monthlyUSD: fee)
+        SubscriptionComparison.multiple(estimate: estimate, monthlyUSD: fee)
+    }
+
+    /// Counted from the start of the current subscription month when its date
+    /// is known; otherwise the last 30 days.
+    private var cycle: DateInterval? {
+        dashboard.usageCostHistory == nil || dashboard.subscriptionDatePreferenceKey == nil
+            ? nil : dashboard.billingCycle(manual: subscriptionDate)
+    }
+
+    private var estimate: CostEstimateSummary? {
+        guard let cycle = cycle, let history = dashboard.usageCostHistory else { return dashboard.usageCostEstimate }
+        return history.costEstimate(since: cycle.start)
+    }
+
+    private var models: [ModelUsageSummary] {
+        guard let cycle = cycle, let history = dashboard.usageCostHistory else { return dashboard.modelUsage }
+        return history.modelUsage(since: cycle.start)
+    }
+
+    private var title: String {
+        let local = dashboard.id == "claude"
+        guard cycle != nil else { return L(local ? "Local usage value · 30d" : "Usage value · 30d") }
+        return L(local ? "Local usage value · this billing cycle" : "Usage value · this billing cycle")
+    }
+
+    private var cycleText: String? {
+        guard let cycle = cycle else { return nil }
+        let style = Date.FormatStyle(date: .abbreviated, time: .omitted).locale(L10n.locale)
+        return L("Since %@ · resets with the subscription", cycle.start.formatted(style))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ProviderDetailSectionTitle(title: L(dashboard.id == "claude" ? "Local usage value · 30d" : "Usage value · 30d"), symbol: "dollarsign.circle")
+            ProviderDetailSectionTitle(title: title, symbol: "dollarsign.circle")
+            if let cycleText = cycleText {
+                Text(cycleText).font(.system(size: 10)).foregroundColor(.secondary)
+            }
             comparison
             subscriptionEditor
             Text(L(dashboard.id == "claude"
@@ -46,7 +81,7 @@ struct ProviderUsageValueCard: View {
                 : "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account."))
                 .font(.system(size: 9)).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if dashboard.usageCostEstimate?.isPartial == true {
+            if estimate?.isPartial == true {
                 Text(L("Partial estimate · known costs only"))
                     .font(.system(size: 10)).foregroundColor(.secondary)
             }
@@ -59,7 +94,7 @@ struct ProviderUsageValueCard: View {
             DisclosureGroup(isExpanded: $modelsExpanded) {
                 modelRows.padding(.top, 8)
             } label: {
-                Text(L("Models · 30d (%d)", dashboard.modelUsage.count))
+                Text(cycle != nil ? L("Models · this cycle (%d)", models.count) : L("Models · 30d (%d)", models.count))
                     .font(.system(size: 11, weight: .medium))
             }
         }
@@ -72,7 +107,7 @@ struct ProviderUsageValueCard: View {
     private var comparison: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(usageCostText(dashboard.usageCostEstimate, display: currency.display))
+                Text(usageCostText(estimate, display: currency.display))
                     .font(.system(size: 21, weight: .semibold, design: .rounded))
                     .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
                 Text(L("API equivalent"))
@@ -81,7 +116,7 @@ struct ProviderUsageValueCard: View {
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 3) {
                 if let multiple = multiple {
-                    Text((dashboard.usageCostEstimate?.isPartial == true ? "≥" : "")
+                    Text((estimate?.isPartial == true ? "≥" : "")
                          + String(format: "%.2f×", multiple))
                         .font(.system(size: 21, weight: .semibold, design: .rounded))
                         .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
@@ -134,12 +169,12 @@ struct ProviderUsageValueCard: View {
 
     @ViewBuilder
     private var modelRows: some View {
-        if dashboard.modelUsage.isEmpty {
-            Text(L("No model breakdown available for the last 30 days."))
+        if models.isEmpty {
+            Text(L(cycle != nil ? "No model breakdown available for this billing cycle." : "No model breakdown available for the last 30 days."))
                 .font(.system(size: 11)).foregroundColor(.secondary)
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(dashboard.modelUsage) { row in
+                ForEach(models) { row in
                     ModelUsageValueRow(row: row, display: currency.display)
                 }
                 Text(L("Total tokens include cached tokens when reported. Costs use the prices available in local usage data."))

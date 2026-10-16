@@ -28,9 +28,16 @@ struct SubscriptionTimingCard: View {
         _editing = State(initialValue: editing)
     }
 
-    private var timing: SubscriptionTiming? {
-        SubscriptionTiming.resolve(expires: dashboard.subscriptionExpiresAt,
-                                   renews: dashboard.subscriptionRenewsAt, manual: manual)
+    private var timing: SubscriptionTiming? { timing(now: Date()) }
+
+    private func timing(now: Date) -> SubscriptionTiming? {
+        dashboard.subscriptionTiming(manual: manual, now: now)
+    }
+
+    private func origin(of timing: SubscriptionTiming) -> String {
+        if timing.isEstimated { return L("Estimated from subscription start") }
+        if timing.rolledForward { return L("Manual · moved to next month") }
+        return timing.isManual ? L("Manual") : L("Provider")
     }
 
     var body: some View {
@@ -39,7 +46,7 @@ struct SubscriptionTimingCard: View {
                 Label(L(timing?.kind.title ?? "Subscription date"), systemImage: "calendar")
                     .font(.system(size: compact ? 10 : 11, weight: .medium))
                 Spacer(minLength: 4)
-                if !compact && (timing == nil || timing?.isManual == true) {
+                if !compact && (timing.map { $0.isManual || $0.isEstimated } ?? true) {
                     Button(timing == nil ? L("Set date") : L("Edit")) {
                         draftDate = timing?.date ?? Date()
                         draftKind = timing?.kind ?? .expires
@@ -47,11 +54,15 @@ struct SubscriptionTimingCard: View {
                     }.buttonStyle(BorderlessButtonStyle()).font(.system(size: 10))
                 }
             }
-            if let timing = timing {
-                Text(timing.dateText).font(.system(size: compact ? 10 : 12, weight: .medium))
+            if timing != nil {
                 TimelineView(.periodic(from: Date(), by: 60)) { context in
-                    Text(L(timing.status(now: context.date)) + " · " + (timing.isManual ? L("Manual") : L("Provider")))
-                        .font(.system(size: 10)).foregroundColor(.secondary)
+                    if let current = timing(now: context.date) {
+                        VStack(alignment: .leading, spacing: compact ? 3 : 8) {
+                            Text(current.dateText).font(.system(size: compact ? 10 : 12, weight: .medium))
+                            Text(L(current.status(now: context.date)) + " · " + origin(of: current))
+                                .font(.system(size: 10)).foregroundColor(.secondary)
+                        }
+                    }
                 }
             } else {
                 Text(compact ? L("Not provided · set in details") : L("Not provided by this source. You can set a date for this account."))
@@ -78,7 +89,7 @@ struct SubscriptionTimingCard: View {
             }.pickerStyle(SegmentedPickerStyle())
             DatePicker(L("Date"), selection: $draftDate, displayedComponents: .date)
                 .datePickerStyle(FieldDatePickerStyle())
-            Text(L("Saved for this account. Update after renewal."))
+            Text(L("Saved for this account. Moves to the same day next month while the plan still has quota."))
                 .font(.system(size: 10)).foregroundColor(.secondary)
             HStack {
                 if !manual.isEmpty {

@@ -40,6 +40,13 @@ struct UsageValueRegression {
         let estimate = payload.costEstimate(dayCount: 30, now: now, calendar: calendar)
         precondition(estimate.knownCost == 27 && estimate.isPartial)
         precondition(SubscriptionComparison.multiple(estimate: estimate, monthlyUSD: 100) == 0.27)
+        // A billing cycle counts from its first calendar day, not the last 30 days.
+        let cycleStart = ISO8601DateFormatter().date(from: "2026-09-13T13:42:00Z")!
+        let cycle = payload.costEstimate(since: cycleStart, now: now, calendar: calendar)
+        precondition(cycle.knownCost == 17 && cycle.isPartial, "the cycle's first day is counted whole")
+        precondition(payload.modelUsage(since: cycleStart, now: now, calendar: calendar).map(\.tokens) == [50, 20, 30])
+        precondition(payload.costEstimate(since: now.addingTimeInterval(86400), now: now, calendar: calendar).knownCost == 0,
+                     "a cycle starting tomorrow has no cost yet")
         precondition(SubscriptionComparison.multiple(estimate: estimate, monthlyUSD: 0) == nil)
         precondition(SubscriptionComparison.multiple(estimate: nil, monthlyUSD: 100) == nil)
         let usd = Locale(identifier: "en_US")

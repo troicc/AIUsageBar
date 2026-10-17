@@ -49,6 +49,7 @@ struct QuotaPaceOverlay: View, Equatable {
 
     var body: some View {
         Canvas { context, size in
+            if let pace = pace { drawQuiet(pace, in: &context, size: size) }
             for cycle in cycles {
                 drawUsedUp(cycle, in: &context, size: size)
                 drawGuide(cycle, in: &context, size: size)
@@ -90,16 +91,49 @@ struct QuotaPaceOverlay: View, Equatable {
         }
     }
 
+    /// The stretches of three hours or more ahead that are usually quiet, up
+    /// to the projected run-out, faintly shaded with a moon where there is
+    /// room: the forecast stays flat across them.
+    private func drawQuiet(_ pace: QuotaPace, in context: inout GraphicsContext, size: CGSize) {
+        guard let rhythm = pace.rhythm, pace.followsRhythm, !pace.isExhausted else { return }
+        let end = max(now, pace.runsOutAt ?? pace.cycle.end)
+        var runs: [DateInterval] = []
+        var start: Date?
+        for piece in QuotaUsageRhythm.hours(in: DateInterval(start: now, end: end), calendar: rhythm.calendar) {
+            if rhythm.isQuiet(at: piece.start) {
+                if start == nil { start = piece.start }
+            } else if let first = start {
+                runs.append(DateInterval(start: first, end: piece.start))
+                start = nil
+            }
+        }
+        if let first = start { runs.append(DateInterval(start: first, end: max(first, end))) }
+        for run in runs where run.duration >= 3 * 3600 || run.start == now || run.end == end {
+            let left = scale.position(run.start, width: size.width), right = scale.position(run.end, width: size.width)
+            guard right > left + 0.5 else { continue }
+            let rect = CGRect(x: left, y: 0, width: right - left, height: size.height - 6)
+            context.fill(Path(rect), with: .color(Color.primary.opacity(0.035)))
+            if rect.width >= 12 {
+                context.draw(Text(Image(systemName: "moon.fill")).font(.system(size: 6.5)).foregroundColor(.secondary.opacity(0.7)),
+                             at: CGPoint(x: rect.midX, y: 7))
+            }
+        }
+    }
+
     private func drawProjection(_ pace: QuotaPace, in context: inout GraphicsContext, size: CGSize) {
         guard pace.isMeasured, !pace.isExhausted, pace.ratePerHour > 0.01 else { return }
         let start = point(now, pace.usedPercent, size)
-        let end = pace.runsOutAt.map { point($0, 100, size) }
-            ?? point(pace.cycle.end, pace.projectedAtReset(now: now), size)
         var path = Path()
         path.move(to: start)
-        path.addLine(to: end)
+        if pace.followsRhythm {
+            for step in pace.forecast { path.addLine(to: point(step.date, step.percent, size)) }
+        } else {
+            path.addLine(to: pace.runsOutAt.map { point($0, 100, size) }
+                ?? point(pace.cycle.end, pace.projectedAtReset(now: now), size))
+        }
+        let end = path.currentPoint ?? start
         context.stroke(path, with: .color(QuotaInsightStyle.brand.opacity(0.85)),
-                       style: StrokeStyle(lineWidth: 1.3, lineCap: .round, dash: [4, 3]))
+                       style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round, dash: [4, 3]))
         let dot = Path(ellipseIn: CGRect(x: end.x - 3, y: end.y - 3, width: 6, height: 6))
         context.fill(dot, with: .color(Color(nsColor: .windowBackgroundColor)))
         context.stroke(dot, with: .color(QuotaInsightStyle.brand), lineWidth: 1.3)
@@ -154,22 +188,51 @@ struct QuotaWindowBars: View, Equatable {
 
 /// Explains the pace chart's marks.
 struct QuotaPaceKey: View {
+    /// Whether the forecast follows the usual rhythm, with its quiet hours shaded.
+    var showsQuiet = false
+
+    /// The lines on one row; the shaded marks join them, or take a second
+    /// row when the quiet hours are shown too.
     var body: some View {
-        HStack(spacing: 12) {
-            swatch(L("Weekly usage")) { path in
-                path.move(to: CGPoint(x: 0, y: 3)); path.addLine(to: CGPoint(x: 12, y: 3))
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 12) {
+                lines
+                if !showsQuiet { usedUp }
+                Spacer(minLength: 0)
             }
-            .foregroundColor(QuotaInsightStyle.brand)
-            dashed(L("Even pace"), color: QuotaInsightStyle.even)
-            dashed(L("Projected"), color: QuotaInsightStyle.brand)
-            HStack(spacing: 5) {
-                RoundedRectangle(cornerRadius: 1.5).fill(QuotaInsightStyle.usedUp.opacity(0.25)).frame(width: 12, height: 6)
-                Text(L("Used up"))
+            if showsQuiet {
+                HStack(spacing: 12) {
+                    usedUp
+                    HStack(spacing: 5) {
+                        Image(systemName: "moon.fill").font(.system(size: 6.5))
+                            .frame(width: 12, height: 9)
+                            .background(RoundedRectangle(cornerRadius: 1.5).fill(Color.primary.opacity(0.08)))
+                        Text(L("Usually idle"))
+                    }
+                    .help(L("The forecast follows how you used the quota hour by hour over the last 4 weeks, so the hours you are usually asleep or away add nothing."))
+                    Spacer(minLength: 0)
+                }
             }
-            Spacer(minLength: 0)
         }
         .font(.system(size: 9))
         .foregroundColor(.secondary)
+    }
+
+    @ViewBuilder
+    private var lines: some View {
+        swatch(L("Weekly usage")) { path in
+            path.move(to: CGPoint(x: 0, y: 3)); path.addLine(to: CGPoint(x: 12, y: 3))
+        }
+        .foregroundColor(QuotaInsightStyle.brand)
+        dashed(L("Even pace"), color: QuotaInsightStyle.even)
+        dashed(L("Projected"), color: QuotaInsightStyle.brand)
+    }
+
+    private var usedUp: some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 1.5).fill(QuotaInsightStyle.usedUp.opacity(0.25)).frame(width: 12, height: 6)
+            Text(L("Used up"))
+        }
     }
 
     private func swatch(_ title: String, _ shape: @escaping (inout Path) -> Void) -> some View {
@@ -188,6 +251,264 @@ struct QuotaPaceKey: View {
             .frame(width: 12, height: 6)
             Text(title)
         }
+    }
+}
+
+// MARK: - Days of a weekly range
+
+enum QuotaDays {
+    /// The calendar days that overlap `range`, whole.
+    static func days(in range: DateInterval, calendar: Calendar = .current) -> [DateInterval] {
+        var result: [DateInterval] = []
+        var day = calendar.dateInterval(of: .day, for: range.start)
+        while let current = day, current.start < range.end, result.count < 64 {
+            result.append(current)
+            day = calendar.dateInterval(of: .day, for: current.end)
+        }
+        return result
+    }
+}
+
+/// Midnight guides through the plot of a weekly range, with the chosen day shaded.
+struct QuotaDayColumns: View, Equatable {
+    let scale: QuotaTrendScale
+    let selected: Date?
+
+    var body: some View {
+        Canvas { context, size in
+            let bottom = size.height - 6
+            let days = QuotaDays.days(in: scale.range)
+            if let selected = selected, let day = days.first(where: { $0.contains(selected) }) {
+                let left = scale.x(day.start, width: size.width), right = scale.x(day.end, width: size.width)
+                if right > left {
+                    context.fill(Path(roundedRect: CGRect(x: left, y: 0, width: right - left, height: bottom), cornerRadius: 3),
+                                 with: .color(QuotaInsightStyle.brand.opacity(0.09)))
+                }
+            }
+            for day in days.dropFirst() {
+                let x = scale.x(day.start, width: size.width)
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: 6))
+                line.addLine(to: CGPoint(x: x, y: bottom))
+                context.stroke(line, with: .color(Color.primary.opacity(0.07)), lineWidth: 0.5)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// One column per day under a weekly range: the weekday over the date, cut
+/// by a tick at each midnight. Clicking a day selects it, and again clears it.
+struct QuotaDayAxis: View {
+    let scale: QuotaTrendScale
+    let now: Date
+    @Binding var selected: Date?
+
+    private static let weekday: DateFormatter = formatter("EEE")
+    private static let date: DateFormatter = formatter("d")
+    private static let full: DateFormatter = formatter("MMMMdEEEE")
+
+    private static func formatter(_ template: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = L10n.locale
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            ZStack(alignment: .topLeading) {
+                ForEach(QuotaDays.days(in: scale.range), id: \.self) { day in
+                    column(day, width: width)
+                }
+            }
+        }
+        .frame(height: 26)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(L("Days")))
+    }
+
+    private func column(_ day: DateInterval, width: CGFloat) -> some View {
+        let left = scale.x(day.start, width: width), right = scale.x(day.end, width: width)
+        let isSelected = selected.map(day.contains) ?? false
+        let isToday = day.contains(now)
+        let isFuture = day.start > now
+        let tint: Color = isToday ? QuotaInsightStyle.brand : isFuture ? .secondary.opacity(0.6) : .secondary
+        return VStack(spacing: 1) {
+            if right - left >= 18 {
+                Text(Self.weekday.string(from: day.start)).font(.system(size: 8.5))
+                Text(Self.date.string(from: day.start))
+                    .font(.system(size: 10, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
+            }
+        }
+        .foregroundColor(isSelected ? .primary : tint)
+        .lineLimit(1)
+        .frame(width: max(1, right - left - 2), height: 26)
+        .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(isSelected ? QuotaInsightStyle.brand.opacity(0.16) : Color.clear))
+        .overlay(alignment: .topLeading) {
+            Rectangle().fill(Color.primary.opacity(0.18)).frame(width: 0.5, height: 4).offset(x: -1)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { selected = isSelected ? nil : day.start }
+        .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+        .help(L("%@ · click for details", Self.full.string(from: day.start)))
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel(Text(Self.full.string(from: day.start)))
+        .position(x: (left + right) / 2, y: 13)
+    }
+}
+
+/// What happened on the chosen day of the weekly range, or, ahead of now,
+/// what the forecast expects of it.
+struct QuotaDayDetail: View {
+    let day: DateInterval
+    let weekly: ClaudeQuotaSeries
+    let fiveHour: ClaudeQuotaSeries?
+    let pace: QuotaPace?
+    let now: Date
+    let showDay: (() -> Void)?
+    let close: () -> Void
+
+    private var isToday: Bool { day.contains(now) }
+    private var isFuture: Bool { day.start > now }
+
+    private static func formatter(_ template: String) -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = L10n.locale
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        return formatter
+    }
+
+    private static let title = formatter("MMMMdEEEE")
+    private static let time = formatter("HHmm")
+
+    /// Weekly points used that day, timed at the reading that shows each rise.
+    private var used: Double {
+        weekly.within(day).consumptionSteps().filter { day.contains($0.timestamp) }.reduce(0) { $0 + $1.points }
+    }
+
+    /// First and last rise of the day, from the finer 5-hour readings when there are any.
+    private var active: (start: Date, end: Date)? {
+        let steps = (fiveHour ?? weekly).within(day).consumptionSteps().filter { day.contains($0.timestamp) }
+        guard let first = steps.first, let last = steps.last else { return nil }
+        return (first.timestamp, last.timestamp)
+    }
+
+    private var windows: [ClaudeQuotaSeries.Cycle] {
+        (fiveHour?.cycles() ?? []).filter { day.contains($0.interval.start) && $0.interval.start < day.end && $0.peakPercent > 0 }
+    }
+
+    /// Points the forecast expects for the rest of the day.
+    private var expected: Double? {
+        guard let pace = pace, pace.isMeasured, !pace.isExhausted, pace.cycle.end > now, day.end > now else { return nil }
+        let from = max(day.start, now), to = min(day.end, pace.cycle.end)
+        guard to > from else { return nil }
+        return max(0, pace.projectedPercent(at: to, now: now) - pace.projectedPercent(at: from, now: now))
+    }
+
+    /// The longest usually quiet stretch of that weekday.
+    private var quiet: (start: Int, end: Int)? {
+        guard let rhythm = pace?.rhythm, pace?.followsRhythm == true else { return nil }
+        var best: (start: Int, end: Int)?
+        var start: Int?
+        for hour in 0...24 {
+            let date = day.start.addingTimeInterval(Double(hour) * 3600)
+            if hour < 24, rhythm.isQuiet(at: date) {
+                if start == nil { start = hour }
+            } else if let first = start {
+                if hour - first > (best.map { $0.end - $0.start } ?? 1) { best = (first, hour) }
+                start = nil
+            }
+        }
+        return best
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(Self.title.string(from: day.start)).font(.system(size: 11, weight: .semibold))
+                if isToday || isFuture { tag(isToday ? L("Today") : L("Forecast")) }
+                Spacer(minLength: 4)
+                if let showDay = showDay, !isFuture {
+                    Button(action: showDay) {
+                        HStack(spacing: 2) {
+                            Text(L("24-hour view"))
+                            Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.accentColor)
+                    .help(L("Show this day in the 5-hour view"))
+                }
+                Button(action: close) {
+                    Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                        .frame(width: 16, height: 16)
+                        .background(Circle().fill(Color.primary.opacity(0.07)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help(L("Close"))
+                .accessibilityLabel(Text(L("Close")))
+            }
+            figures
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.045)))
+    }
+
+    @ViewBuilder
+    private var figures: some View {
+        let used = isFuture ? 0 : self.used
+        let expected = self.expected
+        HStack(alignment: .top, spacing: 14) {
+            if !isFuture {
+                figure("+" + InsightFormat.percent(used) + "%", caption: L("Weekly quota used"))
+            }
+            if let expected = expected, isToday || isFuture {
+                figure("≈ +" + InsightFormat.percent(expected) + "%",
+                       caption: isToday ? L("Expected later today") : L("Expected"), tint: QuotaInsightStyle.brand)
+            }
+            if !isFuture, !windows.isEmpty {
+                let usedUp = windows.filter { !$0.exhausted.isEmpty }.count
+                figure("\(windows.count)", caption: usedUp > 0 ? L("5-hour windows · %d used up", usedUp) : L("5-hour windows"))
+            }
+            if !isFuture, let active = active {
+                figure(Self.time.string(from: active.start) + "–" + Self.time.string(from: active.end), caption: L("Active hours"))
+            } else if isFuture, let quiet = quiet {
+                figure(InsightFormat.hour(quiet.start) + "–" + InsightFormat.hour(quiet.end), caption: L("Usually idle"),
+                       tint: .secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        if !isFuture, used == 0, active == nil, expected == nil {
+            Text(L("No use recorded on this day.")).font(.system(size: 10)).foregroundColor(.secondary)
+        } else if isFuture, expected == nil {
+            Text(L("A forecast follows once there are more readings.")).font(.system(size: 10)).foregroundColor(.secondary)
+        }
+    }
+
+    private func tag(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(QuotaInsightStyle.brand)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Capsule().fill(QuotaInsightStyle.brand.opacity(0.12)))
+    }
+
+    private func figure(_ value: String, caption: String, tint: Color = .primary) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 14, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundColor(tint)
+                .lineLimit(1)
+            Text(caption).font(.system(size: 9)).foregroundColor(.secondary).lineLimit(1)
+        }
+        .fixedSize()
     }
 }
 
@@ -466,15 +787,19 @@ struct ClaudeUsageInsightsCard: View {
                         detail: L("A forecast follows once there are more readings."))
         }
         if let runsOut = pace.runsOutAt {
+            let early = InsightFormat.duration(pace.cycle.end.timeIntervalSince(runsOut), now: now)
             return Tile(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.fast, label: label,
                         value: L("Runs out %@", InsightFormat.moment(runsOut)),
-                        detail: L("%@ before the reset, at the last day's rate.",
-                                  InsightFormat.duration(pace.cycle.end.timeIntervalSince(runsOut), now: now)))
+                        detail: pace.followsRhythm
+                            ? L("%@ before the reset, at the last day's rate and your usual hours.", early)
+                            : L("%@ before the reset, at the last day's rate.", early))
         }
+        let left = InsightFormat.percent(100 - pace.projectedAtReset(now: now))
         return Tile(id: "pace", symbol: "speedometer", tint: QuotaInsightStyle.slow, label: label,
                     value: L("Lasts the week"),
-                    detail: L("About %@%% left at the reset, at the last day's rate.",
-                              InsightFormat.percent(100 - pace.projectedAtReset(now: now))))
+                    detail: pace.followsRhythm
+                        ? L("About %@%% left at the reset, at the last day's rate and your usual hours.", left)
+                        : L("About %@%% left at the reset, at the last day's rate.", left))
     }
 
     private func changeTile(_ change: Double?) -> Tile {

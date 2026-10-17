@@ -245,6 +245,33 @@ struct ClaudeQuotaHistoryRegression {
         precondition(habits.windowsUsed == 4 && habits.windowsUsedUp == 4 && habits.drainTime == 4 * 3600,
                      "each window was used up four hours in")
         precondition(habits.peakHours.count == 2, "two busiest hours")
+        // Rhythm: a point an hour from 9:00 to 21:00, nothing overnight. The
+        // forecast stays flat through the night and runs out that evening,
+        // not at the next midnight as the straight day-rate line would.
+        let day0 = calendarUTC.startOfDay(for: t0)
+        let rhythmWeekEnd = day0.addingTimeInterval(7 * 86400)
+        let daytime = ClaudeQuotaSeries(id: "weekly", title: "Weekly", samples: (0...96).map { hour in
+            let done = (0..<hour).filter { (9..<21).contains($0 % 24) }.count
+            return ClaudeQuotaSample(timestamp: day0.addingTimeInterval(Double(hour) * 3600),
+                                     usedPercent: 40 + Double(done), resetsAt: rhythmWeekEnd)
+        })
+        let rhythmNow = day0.addingTimeInterval(4 * 86400)
+        let rhythm = QuotaUsageRhythm.make(from: daytime, now: rhythmNow, calendar: calendarUTC)!
+        precondition(rhythm.isQuiet(at: day0.addingTimeInterval(4 * 3600)) && !rhythm.isQuiet(at: day0.addingTimeInterval(12 * 3600))
+                     && abs(rhythm.rate(at: day0.addingTimeInterval(12.5 * 3600)) - 1) < 0.001, "nights are quiet, days a point an hour")
+        precondition(QuotaUsageRhythm.make(from: daytime, now: day0.addingTimeInterval(2 * 86400), calendar: calendarUTC) == nil,
+                     "two days are too few for a rhythm")
+        let shaped = daytime.pace(now: rhythmNow, lookback: 86400, rhythm: rhythm)!
+        precondition(shaped.followsRhythm && abs(shaped.rhythmScale - 1) < 0.001, "the last day matches the rhythm")
+        precondition(shaped.forecast.first { $0.date == rhythmNow.addingTimeInterval(9 * 3600) }.map { abs($0.percent - 88) < 0.001 } == true,
+                     "flat through the night")
+        precondition(shaped.runsOutAt == rhythmNow.addingTimeInterval(21 * 3600) && shaped.forecast.last?.percent == 100,
+                     "runs out at 21:00, after twelve daytime hours")
+        precondition(daytime.pace(now: rhythmNow, lookback: 86400)?.runsOutAt == rhythmNow.addingTimeInterval(24 * 3600),
+                     "the straight line spreads the day's rate over the night")
+        precondition(abs(shaped.projectedPercent(at: rhythmNow.addingTimeInterval(9 * 3600), now: rhythmNow) - 88) < 0.001
+                     && abs(shaped.projectedPercent(at: rhythmNow.addingTimeInterval(9.5 * 3600), now: rhythmNow) - 88.5) < 0.001
+                     && shaped.projectedPercent(at: rhythmWeekEnd, now: rhythmNow) == 100, "nothing expected overnight")
         // Official account usage: per-product weekly breakdown and the
         // included credit (the window that carries dollar amounts).
         let accountJSON = Data("""

@@ -20,6 +20,10 @@ struct ClaudeQuotaHistoryView: View {
     @State private var dragStartPan: TimeInterval?
     /// Pointer position over the plot, for the hover readout.
     @State private var pointer: CGPoint?
+    /// The day chosen in the weekly view, shown in detail under the chart.
+    @State private var selectedDay: Date?
+    /// A day to show once the view switches to the 5-hour window.
+    @State private var pendingDay: Date?
     @AppStorage(QuotaChartMode.preferenceKey) private var storedMode = QuotaChartMode.insights.rawValue
     let now: Date
     /// Overrides the display style chosen in Settings, for previews.
@@ -27,13 +31,14 @@ struct ClaudeQuotaHistoryView: View {
 
     /// `expanded` is kept for callers; the trend is always shown now.
     init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour",
-         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil, mode: QuotaChartMode? = nil) {
+         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil, mode: QuotaChartMode? = nil, day: Date? = nil) {
         self.dashboard = dashboard
         self.now = now
         forcedMode = mode
         _selected = State(initialValue: window)
         _pan = State(initialValue: scrolledBack)
         _pointer = State(initialValue: pointer)
+        _selectedDay = State(initialValue: day)
     }
 
     private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
@@ -55,7 +60,8 @@ struct ClaudeQuotaHistoryView: View {
     /// The pace of the shown window, for the insights style.
     private var pace: QuotaPace? {
         guard showsInsights else { return nil }
-        return lane?.pace(now: now, lookback: isWeekly ? 86_400 : 3600)
+        if isWeekly { return ClaudeQuotaInsights.weeklyPace(history: dashboard.claudeQuotaHistory, now: now) }
+        return lane?.pace(now: now, lookback: 3600)
     }
 
     /// Renewal or expiry date, from the account, the subscription card or the subscription start.
@@ -104,7 +110,15 @@ struct ClaudeQuotaHistoryView: View {
         DSCard(padding: showsInsights ? 16 : 14) {
             if showsInsights { insightsLayout } else { classicLayout }
         }
-        .onChange(of: selected) { _ in pan = 0 }
+        .onChange(of: selected) { _ in
+            pan = 0
+            selectedDay = nil
+            // Coming from a day picked in the weekly view: end the 24 hours with that day.
+            if let day = pendingDay, let end = Calendar.current.dateInterval(of: .day, for: day)?.end {
+                pendingDay = nil
+                scroll(by: currentRange.end.timeIntervalSince(end))
+            }
+        }
     }
 
     private var sharedNote: String {
@@ -277,10 +291,15 @@ struct ClaudeQuotaHistoryView: View {
     /// The curve with its overlays, hover readout, scrolling and dragging.
     private func plotArea(_ series: ClaudeQuotaSeries, scale: QuotaTrendScale, longGap: TimeInterval,
                           weekly: ClaudeQuotaSeries?, weeks: [ClaudeQuotaSeries.Cycle]) -> some View {
+        // Days can be picked in the weekly view with insights.
+        let picksDays = showsInsights && isWeekly
         // Per-segment source coloring is an estimate; when the
         // account reports the official breakdown, show that instead.
-        GeometryReader { geometry in
+        return GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
+                if picksDays {
+                    QuotaDayColumns(scale: scale, selected: selectedDay).equatable()
+                }
                 ClaudeQuotaPlot(series: series.thinned(bucket: range.duration / 400), scale: scale, now: now,
                                 longGap: longGap,
                                 showsLatest: series.samples.last == lane?.samples.last
@@ -297,10 +316,18 @@ struct ClaudeQuotaHistoryView: View {
                     QuotaHoverReadout(series: series, scale: scale, pointer: pointer)
                 }
             }
+            .contentShape(Rectangle())
             .background(ChartPointerReader(
                 onScroll: { deltaX in scroll(by: deltaX / max(1, geometry.size.width - 32) * range.duration) },
                 onHover: { pointer = $0 }))
             .gesture(drag(plotWidth: max(1, geometry.size.width - 32)))
+            .onTapGesture {
+                // Clicking the plot picks the day under the pointer, or clears it.
+                guard picksDays, let pointer = pointer, pointer.x <= geometry.size.width - 28,
+                      let day = Calendar.current.dateInterval(of: .day, for: scale.date(at: pointer.x, width: geometry.size.width))
+                else { return }
+                selectedDay = selectedDay.map(day.contains) == true ? nil : day.start
+            }
         }
     }
 
@@ -324,11 +351,23 @@ struct ClaudeQuotaHistoryView: View {
                     QuotaCycleStrip(cycles: cycles, scale: scale, now: now).laneLabel(L("Week"))
                 }
             }
-            QuotaTimeAxis(scale: scale, now: now, daily: isWeekly)
             if isWeekly {
+                QuotaDayAxis(scale: scale, now: now, selected: $selectedDay)
+                if let day = selectedDay.flatMap({ Calendar.current.dateInterval(of: .day, for: $0) }),
+                   day.end > range.start, day.start < range.end, let lane = lane
+                {
+                    QuotaDayDetail(day: day, weekly: lane, fiveHour: fiveHourLane, pace: pace, now: now,
+                                   showDay: fiveHourLane == nil ? nil : {
+                                       pendingDay = day.start
+                                       selected = "five-hour"
+                                   },
+                                   close: { selectedDay = nil })
+                        .padding(.top, 2)
+                }
                 QuotaWindowBars(windows: windows, scale: scale).equatable().padding(.top, 8)
-                QuotaPaceKey().padding(.top, 6)
+                QuotaPaceKey(showsQuiet: pace?.followsRhythm == true && range.end >= now).padding(.top, 6)
             } else {
+                QuotaTimeAxis(scale: scale, now: now, daily: false)
                 QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: weekly != nil).padding(.top, 6)
             }
         }

@@ -98,6 +98,14 @@ enum UIGallery {
                                appearance: appearance, output: output.appendingPathComponent(name))
                     }
                 }
+                // A day picked in the weekly view: yesterday as recorded, tomorrow as forecast.
+                for (name, offset) in [("past", -1), ("future", 1)] {
+                    let day = Calendar.current.date(byAdding: .day, value: offset, to: Date())!
+                    render(ClaudeQuotaHistoryView(dashboard: dashboard, window: "weekly", mode: .insights, day: day)
+                            .padding(16).frame(width: 390)
+                            .background(Color(nsColor: .windowBackgroundColor)),
+                           appearance: appearance, output: output.appendingPathComponent("quota-trend-weekly-day-\(name)-\(mode).png"))
+                }
                 render(ClaudeUsageInsightsCard(dashboard: dashboard, now: Date())
                         .padding(16).frame(width: 390)
                         .background(Color(nsColor: .windowBackgroundColor)),

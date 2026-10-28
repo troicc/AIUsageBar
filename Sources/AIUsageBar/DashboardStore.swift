@@ -60,6 +60,7 @@ final class DashboardStore: ObservableObject {
     /// read with Claude Code's own sign-in.
     private let claudeAccountClient = ClaudeAccountUsageClient()
     private var claudeAccountUsage: ClaudeAccountUsage?
+    private let claudeCreditHistoryStore = ClaudeCreditHistoryStore()
     private let spendHistoryStore = LocalSpendHistoryStore()
     private let tokenHistoryStore: LocalTokenHistoryStore
 
@@ -203,6 +204,7 @@ final class DashboardStore: ObservableObject {
     func loadClaudeAccountUsageIfNeeded() {
         let claude = snapshots.filter { $0.provider == "claude" }
         guard claude.count == 1, let snapshotID = claude.first?.id else { return }
+        let account = claude.first?.claudeQuotaAccountKey
         Task { [weak self] in
             guard let self = self else { return }
             let usage = await self.claudeAccountClient.usage()
@@ -210,6 +212,10 @@ final class DashboardStore: ObservableObject {
             self.claudeAccountUsage = usage
             self.dashboards[snapshotID]?.claudeProductBreakdown = usage?.breakdown
             self.dashboards[snapshotID]?.claudeIncludedCredit = usage?.includedCredit
+            if let account = account {
+                self.dashboards[snapshotID]?.claudeCreditHistory =
+                    self.claudeCreditHistoryStore.record(usage?.includedCredit, account: account)
+            }
             self.dashboards[snapshotID]?.subscriptionStartedAt = usage?.subscriptionStartedAt
         }
     }
@@ -335,6 +341,7 @@ final class DashboardStore: ObservableObject {
             .map { $0.attributed(activeMinutes: claudeActiveMinutes, since: Date().addingTimeInterval(-86_400)) }
         dashboard.claudeProductBreakdown = claudeAccountUsage?.breakdown
         dashboard.claudeIncludedCredit = claudeAccountUsage?.includedCredit
+        dashboard.claudeCreditHistory = snapshot.claudeQuotaAccountKey.flatMap(claudeCreditHistoryStore.history(account:))
         dashboard.subscriptionStartedAt = claudeAccountUsage?.subscriptionStartedAt
         dashboard.claudeQuotaHistoryNotice = snapshot.claudeQuotaAccountKey == nil
             ? L("Account identity unavailable. History starts after this account can be identified.")
@@ -350,6 +357,7 @@ final class DashboardStore: ObservableObject {
             rebuilt[snapshot.id]?.claudeQuotaHistoryNotice = dashboards[snapshot.id]?.claudeQuotaHistoryNotice
             rebuilt[snapshot.id]?.claudeProductBreakdown = dashboards[snapshot.id]?.claudeProductBreakdown
             rebuilt[snapshot.id]?.claudeIncludedCredit = dashboards[snapshot.id]?.claudeIncludedCredit
+            rebuilt[snapshot.id]?.claudeCreditHistory = dashboards[snapshot.id]?.claudeCreditHistory
         }
         dashboards = rebuilt
         onRefreshStateChanged?()

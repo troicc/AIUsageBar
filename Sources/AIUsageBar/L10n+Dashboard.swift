@@ -66,6 +66,11 @@ extension L10nTable {
         "Since %@ · resets with the subscription": "自 %@ 起 · 随订阅周期重新计算",
         "Models · this cycle (%d)": "模型 · 本周期（%d）",
         "No model breakdown available for this billing cycle.": "本订阅周期没有可用的模型明细。",
+        "Local Claude Code logs plus the included cloud credit spent, from its balance at each refresh; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill.":
+            "本地 Claude Code 日志，加上赠送云端额度的消耗（按每次刷新时的余额差计算），不含网页聊天。API 等价费用 ÷ 月费，并非订阅的全部价值，也不是账单。",
+        "Local %@ · cloud %@": "本机 %@ · 云端 %@",
+        "Cloud includes %@ already used when the credit was first read.": "云端部分包含首次读取赠送额度时已经用掉的 %@。",
+        "Included credit spent between refreshes.": "两次刷新之间赠送额度的消耗。",
         "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account.":
             "仅统计本地 Claude Code 日志，不含网页聊天。API 等价费用 ÷ 月费，并非订阅的全部价值，也不是账单。日志无法核实计费账号。",
         "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account.":

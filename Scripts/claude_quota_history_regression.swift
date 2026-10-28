@@ -295,6 +295,33 @@ struct ClaudeQuotaHistoryRegression {
         precondition(ClaudeAccountUsage.parse(Data("{\"five_hour\":{\"utilization\":1}}".utf8)) == nil)
         precondition(ClaudeAccountUsage.parse(Data("not json".utf8)) == nil)
         print("PASS | Claude quota attribution: local Claude Code vs other devices, gaps and flat intervals")
+        // Included (cloud) credit: spending is the balance drop between readings.
+        let creditStore = ClaudeCreditHistoryStore(storageDirectory: directory)
+        let grantEnd = FlexibleDate.iso8601("2026-11-05T07:59:00+00:00")
+        func credit(_ remaining: Double, limit: Double = 250, expires: Date? = grantEnd) -> ClaudeIncludedCredit {
+            ClaudeIncludedCredit(limitDollars: limit, remainingDollars: remaining, expiresAt: expires)
+        }
+        let c0 = start
+        precondition(creditStore.record(credit(240), account: "acct", now: c0)?.samples.count == 1)
+        precondition(creditStore.record(credit(240), account: "acct", now: c0.addingTimeInterval(900))?.samples.count == 1,
+                     "an unchanged balance is not stored again")
+        precondition(creditStore.record(nil, account: "acct", now: c0.addingTimeInterval(1000))?.samples.count == 1)
+        creditStore.record(credit(225.5), account: "acct", now: c0.addingTimeInterval(3600))
+        creditStore.record(credit(225.5), account: "acct", now: c0.addingTimeInterval(1800))
+        let creditHistory = creditStore.record(credit(200), account: "acct", now: c0.addingTimeInterval(7200))!
+        precondition(creditHistory.samples.count == 3, "an older reading is ignored")
+        let all = creditHistory.spent(since: c0.addingTimeInterval(-60))
+        precondition(abs(all.dollars - 50) < 0.001 && abs(all.untrackedDollars - 10) < 0.001,
+                     "first reading counts what was already used; later readings add the drop")
+        let later = creditHistory.spent(since: c0.addingTimeInterval(3600))
+        precondition(abs(later.dollars - 40) < 0.001 && later.untrackedDollars == 0, "only readings in the range")
+        // A new grant starts from its own usage; it never subtracts.
+        let renewed = creditStore.record(credit(245, limit: 300, expires: grantEnd?.addingTimeInterval(30 * 86400)),
+                                         account: "acct", now: c0.addingTimeInterval(9000))!
+        precondition(abs(renewed.spent(since: c0.addingTimeInterval(8000)).dollars - 55) < 0.001, "new grant")
+        precondition(ClaudeCreditHistoryStore(storageDirectory: directory).history(account: "acct")?.samples.count == 4,
+                     "readings persist")
         print("PASS | Claude account usage: official product breakdown and included credit")
+        print("PASS | Claude cloud credit: balance drops between refreshes, first reading, new grant")
     }
 }

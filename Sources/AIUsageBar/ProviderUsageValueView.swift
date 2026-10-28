@@ -36,7 +36,7 @@ struct ProviderUsageValueCard: View {
     private var feeText: String { monthlyFee.isEmpty ? providerFee : monthlyFee }
     private var fee: Double? { SubscriptionComparison.monthlyUSD(feeText) }
     private var multiple: Double? {
-        SubscriptionComparison.multiple(estimate: estimate, monthlyUSD: fee)
+        SubscriptionComparison.multiple(estimate: total, monthlyUSD: fee)
     }
 
     /// Counted from the start of the current subscription month when its date
@@ -51,13 +51,26 @@ struct ProviderUsageValueCard: View {
         return history.costEstimate(since: cycle.start)
     }
 
+    /// Included credit spent by cloud sessions over the same range.
+    private var cloud: ClaudeCreditHistory.Spend? {
+        dashboard.claudeCreditHistory?.spent(since: cycle?.start ?? Date().addingTimeInterval(-30 * 86_400))
+    }
+
+    /// Local logs plus cloud credit; without a local cost it is partial.
+    private var total: CostEstimateSummary? {
+        guard let cloud = cloud else { return estimate }
+        return CostEstimateSummary(knownCost: (estimate?.knownCost ?? 0) + cloud.dollars,
+            unpricedModels: estimate?.unpricedModels ?? [],
+            hasUnattributedCost: estimate?.knownCost == nil || estimate?.hasUnattributedCost == true)
+    }
+
     private var models: [ModelUsageSummary] {
         guard let cycle = cycle, let history = dashboard.usageCostHistory else { return dashboard.modelUsage }
         return history.modelUsage(since: cycle.start)
     }
 
     private var title: String {
-        let local = dashboard.id == "claude"
+        let local = dashboard.id == "claude" && cloud == nil
         guard cycle != nil else { return L(local ? "Local usage value · 30d" : "Usage value · 30d") }
         return L(local ? "Local usage value · this billing cycle" : "Usage value · this billing cycle")
     }
@@ -76,12 +89,14 @@ struct ProviderUsageValueCard: View {
             }
             comparison
             subscriptionEditor
-            Text(L(dashboard.id == "claude"
+            Text(L(cloud != nil
+                ? "Local Claude Code logs plus the included cloud credit spent, from its balance at each refresh; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill."
+                : dashboard.id == "claude"
                 ? "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account."
                 : "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account."))
                 .font(.system(size: 9)).foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if estimate?.isPartial == true {
+            if total?.isPartial == true {
                 Text(L("Partial estimate · known costs only"))
                     .font(.system(size: 10)).foregroundColor(.secondary)
             }
@@ -107,16 +122,27 @@ struct ProviderUsageValueCard: View {
     private var comparison: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(usageCostText(estimate, display: currency.display))
+                Text(usageCostText(total, display: currency.display))
                     .font(.system(size: 21, weight: .semibold, design: .rounded))
                     .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
-                Text(L("API equivalent"))
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+                if let cloud = cloud {
+                    Text(L("Local %@ · cloud %@", usageCostText(estimate, display: currency.display),
+                           currency.display.format(cloud.dollars)))
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                        .monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+                        .help(cloud.untrackedDollars > 0
+                            ? L("Cloud includes %@ already used when the credit was first read.",
+                                currency.display.format(cloud.untrackedDollars))
+                            : L("Included credit spent between refreshes."))
+                } else {
+                    Text(L("API equivalent"))
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
             }
             Spacer(minLength: 0)
             VStack(alignment: .trailing, spacing: 3) {
                 if let multiple = multiple {
-                    Text((estimate?.isPartial == true ? "≥" : "")
+                    Text((total?.isPartial == true ? "≥" : "")
                          + String(format: "%.2f×", multiple))
                         .font(.system(size: 21, weight: .semibold, design: .rounded))
                         .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)

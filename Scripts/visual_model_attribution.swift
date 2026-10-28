@@ -122,6 +122,19 @@ struct ModelAttributionVisualQA {
                     modelsExpanded: true).padding(12)
             }, size: NSSize(width: 362, height: 460), appearance: appearance,
                 output: output.appendingPathComponent("claude-local-value-cycle-\(mode).png"))
+            // Included cloud credit spent in the cycle is added to the local value.
+            var cloudDashboard = entries[1].dashboard
+            cloudDashboard.claudeCreditHistory = ClaudeCreditHistory(samples: [
+                ClaudeCreditSample(timestamp: cycleStart.addingTimeInterval(3600), limitDollars: 250,
+                                   remainingDollars: 238, expiresAt: nil),
+                ClaudeCreditSample(timestamp: Date().addingTimeInterval(-3600), limitDollars: 250,
+                                   remainingDollars: 196.4, expiresAt: nil)])
+            try render(ScrollView {
+                ProviderUsageValueCard(dashboard: cloudDashboard,
+                    preferenceKey: cloudDashboard.subscriptionPreferenceKey!, defaults: defaults,
+                    modelsExpanded: false).padding(12)
+            }, size: NSSize(width: 362, height: 300), appearance: appearance,
+                output: output.appendingPathComponent("claude-cloud-value-cycle-\(mode).png"))
             defaults.removeObject(forKey: cycleKey)
             for state in ["automatic", "manual", "missing", "editor"] {
                 var timingDashboard = codexDashboard

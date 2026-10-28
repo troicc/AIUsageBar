@@ -8,7 +8,7 @@
 - `ClaudeCloudCredit.swift`：`ClaudeCreditHistoryStore` 按账号（`claudeQuotaAccountKey`）把余额存到 `claude-cloud-credit-v1.json`（0600，永久保留），只在余额或额度批次（limit、到期时间 ±300 s）变化时追加。`ClaudeCreditHistory.spent(since:)`：相邻读数的余额下降计入后一次读数的时间；第一次读数时已经用掉的部分计入第一次读数（`untrackedDollars`，悬停提示里说明）；新批次从它自己已用的金额算起，不会出现负数。
 - 读取时机不变：仍然只在查看 Claude 时请求，并缓存 15 分钟（`loadClaudeAccountUsageIfNeeded` 里记录）。差值是累计余额之差，所以间隔长不会漏算，只是时间点比较粗。
 - 用量价值卡片：有云端记录时，大数字 = 本机 + 云端，下面一行显示“本机 $X · 云端 $Y”，倍数按总额计算，标题去掉“本地”，脚注改为说明云端部分怎么算。范围与本机相同（本订阅周期，或近 30 天）。
-- 验证：回归新增云端额度用例（不变不存、旧读数忽略、首次读数、范围、新批次、持久化），全部 contract、provider auth、视觉 5 项 PASS，新增 `claude-cloud-value-cycle-{light,dark}.png` 已人工检查。未构建安装包，未提交。
+- 验证：回归新增云端额度用例（不变不存、旧读数忽略、首次读数、范围、新批次、持久化），全部 contract、provider auth、视觉 5 项 PASS，新增 `claude-cloud-value-cycle-{light,dark}.png` 已人工检查。`build_local_validation.sh`（Universal 2、macOS 12、deep codesign、65-provider offline smoke）通过，已安装 build 202610281137，上一版备份在 `/private/tmp/aiusagebar-install-backup.dMCjof/AIUsageBar.app`。已提交到 main（015ef1b），未推送。
 
 ## 2026-10-17 周额度预测避开睡觉时段、每天刻度、可点击某一天
 

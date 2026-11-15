@@ -88,3 +88,15 @@ swiftc -module-cache-path "$MODULE_CACHE" \
   "$ROOT/Scripts/claude_quota_history_regression.swift" \
   -o "$TMP/claude-quota-history-regression"
 "$TMP/claude-quota-history-regression"
+
+cp "$ROOT/Scripts/refresh_diagnostics_regression.swift" "$TMP/main.swift"
+swiftc -module-cache-path "$MODULE_CACHE" \
+  "$ROOT/Sources/AIUsageBar/Models.swift" \
+  "$ROOT/Sources/AIUsageBar/JSONHelpers.swift" \
+  "$ROOT"/Sources/AIUsageBar/L10n*.swift \
+  "$ROOT/Sources/AIUsageBar/ClaudeQuotaHistory.swift" \
+  "$ROOT/Sources/AIUsageBar/ClaudeQuotaInsights.swift" \
+  "$ROOT/Sources/AIUsageBar/RefreshDiagnosticsLog.swift" \
+  "$TMP/main.swift" \
+  -o "$TMP/refresh-diagnostics-regression"
+"$TMP/refresh-diagnostics-regression"

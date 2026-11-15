@@ -62,6 +62,8 @@ final class DashboardStore: ObservableObject {
     private var claudeAccountUsage: ClaudeAccountUsage?
     private let claudeCreditHistoryStore = ClaudeCreditHistoryStore()
     private let spendHistoryStore = LocalSpendHistoryStore()
+    /// Why provider data was missing, kept locally for later diagnosis.
+    private let diagnosticsLog = RefreshDiagnosticsLog()
     private let tokenHistoryStore: LocalTokenHistoryStore
 
     init(
@@ -101,6 +103,7 @@ final class DashboardStore: ObservableObject {
         async let activity = claudeActivity.activeMinutes()
         do {
             let loaded = try await client.fetchEnabled(status: true)
+            diagnosticsLog.record(snapshots: loaded)
             claudeActiveMinutes = await activity
             // Only one Claude account can be matched to Claude Code's sign-in.
             // Background refreshes reuse the last official usage and never
@@ -195,6 +198,7 @@ final class DashboardStore: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             NSLog("Dashboard refresh failed: %@", error.localizedDescription)
+            diagnosticsLog.recordRefreshFailure(error.localizedDescription)
         }
         onRefreshStateChanged?()
     }

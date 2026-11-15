@@ -2,6 +2,15 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-13 Claude 用量长时间取不到：排查结果与刷新诊断日志
+
+- 现象：Claude 额度记录从 2026-11-12 15:09 到 11-13 10:39 一直没有新增（以往只有夜间断档），之后自己恢复。
+- 排查结论：App 刷新没有卡死（10:39 观察到定时刷新正常拉起引擎）；`claude auth status --json`、`oauth/usage` 官方接口、引擎 `--provider claude`（含旧版 Claude Code 2.1.322）事后复现都正常。失败的是引擎的 Claude 命令行探测（source=`claude`，PTY 跑 `claude` 读 `/usage`）。当时 status.claude.com 显示 Partially Degraded Service，具体报错因为当时没有落盘，已经无法追查。期间账号从 Pro 变为 Max（`planTier max_5x`），Claude Code 在 11-13 10:19 自动升级到 2.1.323。
+- 用户选择“先只加报错日志”：没有在后台刷新里改用官方 `oauth/usage` 兜底（仍遵守“后台刷新绝不请求”），出错时也不保留旧数据。
+- `RefreshDiagnosticsLog.swift`：写入 `~/Library/Application Support/AIUsageBar/refresh-diagnostics.log`（0600，超过 256 KB 时保留较新的一半）。内容包括：每次刷新整体失败（`refresh FAILED #n`）、各服务商报错或无 usage（`ERROR #n`，连续计数）、恢复时一行、Claude 成功但缺账号身份导致额度历史不记录时的 WARN 和恢复。账号只写 hash，报错里的邮箱替换为 `<email>`。出错的结果没有账号，ID 是 `<provider>::default`，恢复时同时按这个 ID 匹配。刷新正常时不写入。
+- 下次再出现“Claude 显示不了”：先看这个日志。
+- 验证：新增 `Scripts/refresh_diagnostics_regression.swift` 并接入 `test_cost_history_parser.sh`。全套回归、UI/release/smoke/Monterey patcher/provider auth/catalog contract、`bash -n`、`git diff --check` 通过。`build_local_validation.sh` 通过，已安装 build 202611131053，旧版备份在 `/private/tmp/aiusagebar-install-backup.s1LBud/AIUsageBar.app`。安装后第一次刷新正常记录了 Claude 额度，没有产生日志文件。2026-11-15 已提交到 main 并推送。
+
 ## 2026-10-28 赠送云端额度计入用量价值
 
 - 用户要求：赠送的 $250 云端额度（oauth/usage 里带 `limit_dollars`/`remaining_dollars` 的代号窗口，`ClaudeIncludedCredit`）的消耗要算进平时的费用，只需标出多少来自云端，在刷新时算差值。云端会话不写本机 Claude Code 日志，所以和本机费用不重复。

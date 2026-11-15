@@ -8,6 +8,47 @@ enum DS {
     static let cardRadius: CGFloat = 12
     static let tileRadius: CGFloat = 10
 
+    private static let formatterLock = NSLock()
+    private static var formatters: [String: DateFormatter] = [:]
+
+    /// A date formatter for a localized template in the app's language, made
+    /// once: making one costs more than drawing a frame of a chart.
+    static func dateFormatter(template: String) -> DateFormatter {
+        let locale = L10n.locale
+        let key = "\(locale.identifier)|\(TimeZone.current.identifier)|\(template)"
+        formatterLock.lock()
+        defer { formatterLock.unlock() }
+        if let formatter = formatters[key] { return formatter }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = TimeZone.current
+        formatter.setLocalizedDateFormatFromTemplate(template)
+        formatters[key] = formatter
+        return formatter
+    }
+
+    private static var moments: [String: String] = [:]
+
+    /// "Nov 14, 2026, 4:05 PM" (or "4:05 PM" without the date) in the app's
+    /// language. Charts label the same readings on every frame of a drag, and
+    /// `Date.FormatStyle` builds a new formatter for each call, so the strings are kept.
+    static func moment(_ date: Date, withDate: Bool = true) -> String {
+        let key = "\(L10n.locale.identifier)|\(TimeZone.current.identifier)|\(withDate)|\(date.timeIntervalSince1970)"
+        formatterLock.lock()
+        if let text = moments[key] {
+            formatterLock.unlock()
+            return text
+        }
+        formatterLock.unlock()
+        let text = date.formatted(Date.FormatStyle(date: withDate ? .abbreviated : .omitted, time: .shortened,
+                                                   timeZone: TimeZone.current).locale(L10n.locale))
+        formatterLock.lock()
+        if moments.count > 4000 { moments.removeAll() }
+        moments[key] = text
+        formatterLock.unlock()
+        return text
+    }
+
     /// Green while plenty remains, amber when it gets tight, red near empty.
     static func tone(remaining: Double?) -> Color {
         guard let remaining = remaining else { return Color.secondary }

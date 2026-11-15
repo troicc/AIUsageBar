@@ -41,6 +41,25 @@ struct QuotaPace: Hashable {
     /// Whether the forecast leaves out the hours usually spent asleep or away.
     var followsRhythm: Bool { !forecast.isEmpty }
 
+    /// The stretches of three hours or more ahead that are usually quiet, up
+    /// to the projected run-out: the forecast stays flat across them.
+    func quietRuns(now: Date) -> [DateInterval] {
+        guard let rhythm = rhythm, followsRhythm, !isExhausted else { return [] }
+        let end = max(now, runsOutAt ?? cycle.end)
+        var runs: [DateInterval] = []
+        var start: Date?
+        for piece in QuotaUsageRhythm.hours(in: DateInterval(start: now, end: end), calendar: rhythm.calendar) {
+            if rhythm.isQuiet(at: piece.start) {
+                if start == nil { start = piece.start }
+            } else if let first = start {
+                runs.append(DateInterval(start: first, end: piece.start))
+                start = nil
+            }
+        }
+        if let first = start { runs.append(DateInterval(start: first, end: max(first, end))) }
+        return runs.filter { $0.duration >= 3 * 3600 || $0.start == now || $0.end == end }
+    }
+
     /// Points ahead of (positive) or behind an even pace.
     var ahead: Double { usedPercent - evenPercent }
 

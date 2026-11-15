@@ -13,17 +13,11 @@ enum QuotaInsightStyle {
 enum InsightFormat {
     /// "Wed 21:00" / "周三 21:00".
     static func moment(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = L10n.locale
-        formatter.setLocalizedDateFormatFromTemplate("EEEHHmm")
-        return formatter.string(from: date)
+        DS.dateFormatter(template: "EEEHHmm").string(from: date)
     }
 
     static func day(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = L10n.locale
-        formatter.setLocalizedDateFormatFromTemplate("Md")
-        return formatter.string(from: date)
+        DS.dateFormatter(template: "Md").string(from: date)
     }
 
     static func duration(_ seconds: TimeInterval, now: Date = Date()) -> String {
@@ -44,18 +38,23 @@ enum InsightFormat {
 struct QuotaPaceOverlay: View, Equatable {
     let cycles: [ClaudeQuotaSeries.Cycle]
     let pace: QuotaPace?
+    /// `pace.quietRuns(now:)`, worked out once rather than on every frame of a drag.
+    let quiet: [DateInterval]
     let scale: QuotaTrendScale
     let now: Date
 
     var body: some View {
-        Canvas { context, size in
+        // The moon is a symbol, laid out once: drawn as text it would be typeset on every frame of a drag.
+        Canvas(renderer: { context, size in
             if let pace = pace { drawQuiet(pace, in: &context, size: size) }
             for cycle in cycles {
                 drawUsedUp(cycle, in: &context, size: size)
                 drawGuide(cycle, in: &context, size: size)
             }
             if let pace = pace { drawProjection(pace, in: &context, size: size) }
-        }
+        }, symbols: {
+            Image(systemName: "moon.fill").font(.system(size: 6.5)).foregroundColor(.secondary.opacity(0.7)).tag(0)
+        })
         .clipShape(PlotClip())
         .allowsHitTesting(false)
     }
@@ -91,31 +90,17 @@ struct QuotaPaceOverlay: View, Equatable {
         }
     }
 
-    /// The stretches of three hours or more ahead that are usually quiet, up
-    /// to the projected run-out, faintly shaded with a moon where there is
-    /// room: the forecast stays flat across them.
+    /// The quiet stretches, faintly shaded with a moon where there is room.
     private func drawQuiet(_ pace: QuotaPace, in context: inout GraphicsContext, size: CGSize) {
-        guard let rhythm = pace.rhythm, pace.followsRhythm, !pace.isExhausted else { return }
-        let end = max(now, pace.runsOutAt ?? pace.cycle.end)
-        var runs: [DateInterval] = []
-        var start: Date?
-        for piece in QuotaUsageRhythm.hours(in: DateInterval(start: now, end: end), calendar: rhythm.calendar) {
-            if rhythm.isQuiet(at: piece.start) {
-                if start == nil { start = piece.start }
-            } else if let first = start {
-                runs.append(DateInterval(start: first, end: piece.start))
-                start = nil
-            }
-        }
-        if let first = start { runs.append(DateInterval(start: first, end: max(first, end))) }
-        for run in runs where run.duration >= 3 * 3600 || run.start == now || run.end == end {
+        guard pace.followsRhythm, !pace.isExhausted else { return }
+        let moon = context.resolveSymbol(id: 0)
+        for run in quiet {
             let left = scale.position(run.start, width: size.width), right = scale.position(run.end, width: size.width)
             guard right > left + 0.5 else { continue }
             let rect = CGRect(x: left, y: 0, width: right - left, height: size.height - 6)
             context.fill(Path(rect), with: .color(Color.primary.opacity(0.035)))
-            if rect.width >= 12 {
-                context.draw(Text(Image(systemName: "moon.fill")).font(.system(size: 6.5)).foregroundColor(.secondary.opacity(0.7)),
-                             at: CGPoint(x: rect.midX, y: 7))
+            if rect.width >= 12, let moon = moon {
+                context.draw(moon, at: CGPoint(x: rect.midX, y: 7))
             }
         }
     }
@@ -308,6 +293,26 @@ struct QuotaDayAxis: View {
     private static let date: DateFormatter = formatter("d")
     private static let full: DateFormatter = formatter("MMMMdEEEE")
 
+    /// A day's weekday, date and full name, formatted once rather than on every frame of a drag.
+    private struct DayText {
+        let weekday: String
+        let date: String
+        let full: String
+        let help: String
+    }
+
+    private static var texts: [Date: DayText] = [:]
+
+    private static func text(_ day: Date) -> DayText {
+        if let text = texts[day] { return text }
+        if texts.count > 400 { texts.removeAll() }
+        let full = Self.full.string(from: day)
+        let text = DayText(weekday: weekday.string(from: day), date: date.string(from: day), full: full,
+                           help: L("%@ · click for details", full))
+        texts[day] = text
+        return text
+    }
+
     private static func formatter(_ template: String) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = L10n.locale
@@ -335,10 +340,11 @@ struct QuotaDayAxis: View {
         let isToday = day.contains(now)
         let isFuture = day.start > now
         let tint: Color = isToday ? QuotaInsightStyle.brand : isFuture ? .secondary.opacity(0.6) : .secondary
+        let text = Self.text(day.start)
         return VStack(spacing: 1) {
             if right - left >= 18 {
-                Text(Self.weekday.string(from: day.start)).font(.system(size: 8.5))
-                Text(Self.date.string(from: day.start))
+                Text(text.weekday).font(.system(size: 8.5))
+                Text(text.date)
                     .font(.system(size: 10, weight: isToday || isSelected ? .semibold : .regular).monospacedDigit())
             }
         }
@@ -353,9 +359,9 @@ struct QuotaDayAxis: View {
         .contentShape(Rectangle())
         .onTapGesture { selected = isSelected ? nil : day.start }
         .onHover { inside in if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
-        .help(L("%@ · click for details", Self.full.string(from: day.start)))
+        .help(text.help)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityLabel(Text(Self.full.string(from: day.start)))
+        .accessibilityLabel(Text(text.full))
         .position(x: (left + right) / 2, y: 13)
     }
 }
@@ -366,6 +372,8 @@ struct QuotaDayDetail: View {
     let day: DateInterval
     let weekly: ClaudeQuotaSeries
     let fiveHour: ClaudeQuotaSeries?
+    /// The 5-hour lane's windows, worked out once for the whole history.
+    let fiveHourCycles: [ClaudeQuotaSeries.Cycle]
     let pace: QuotaPace?
     let now: Date
     let showDay: (() -> Void)?
@@ -397,7 +405,7 @@ struct QuotaDayDetail: View {
     }
 
     private var windows: [ClaudeQuotaSeries.Cycle] {
-        (fiveHour?.cycles() ?? []).filter { day.contains($0.interval.start) && $0.interval.start < day.end && $0.peakPercent > 0 }
+        fiveHourCycles.filter { day.contains($0.interval.start) && $0.interval.start < day.end && $0.peakPercent > 0 }
     }
 
     /// Points the forecast expects for the rest of the day.
@@ -610,9 +618,7 @@ struct QuotaTrendHero: View {
         if pace.isExhausted { return (L("Used up"), L("This window"), QuotaInsightStyle.usedUp) }
         guard pace.isMeasured else { return ("—", L("Forecast soon"), .secondary) }
         if let runsOut = pace.runsOutAt {
-            let formatter = DateFormatter()
-            formatter.locale = L10n.locale
-            formatter.setLocalizedDateFormatFromTemplate(isWeekly ? "EEEHHmm" : "HHmm")
+            let formatter = DS.dateFormatter(template: isWeekly ? "EEEHHmm" : "HHmm")
             return (formatter.string(from: runsOut), L("Runs out"), QuotaInsightStyle.fast)
         }
         return (InsightFormat.percent(100 - pace.projectedAtReset(now: now)) + "%", L("Left at reset"), .primary)
@@ -648,21 +654,19 @@ struct QuotaTrendHero: View {
 /// How many full 5-hour windows a week holds and how many are left in this
 /// one, from the same level the quota-size chart shows.
 struct QuotaAllowanceFigures: View {
-    let fiveHour: ClaudeQuotaSeries
-    let weekly: ClaudeQuotaSeries
-    let now: Date
+    /// `ClaudeQuotaInsights.scaleTrend(...).current`.
+    let perWeek: Double
+    /// Weekly share used now.
+    let weeklyUsed: Double
 
     var body: some View {
-        if let perWeek = ClaudeQuotaInsights.scaleTrend(fiveHour: fiveHour, weekly: weekly).current {
-            let used = weekly.pace(now: now, lookback: 86_400)?.usedPercent ?? weekly.samples.last?.usedPercent ?? 0
-            InsightPanel {
-                HStack(alignment: .center, spacing: 14) {
-                    figure(InsightFormat.count(perWeek), caption: L("Per week, used in full"))
-                    Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 0.5, height: 28)
-                    figure(InsightFormat.count(max(0, 100 - used) / 100 * perWeek), caption: L("Left this week"))
-                    Spacer(minLength: 0)
-                    InfoGlyph(text: L("From the 5-hour and weekly quota used on the same days; see Quota size in Usage insights."))
-                }
+        InsightPanel {
+            HStack(alignment: .center, spacing: 14) {
+                figure(InsightFormat.count(perWeek), caption: L("Per week, used in full"))
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(width: 0.5, height: 28)
+                figure(InsightFormat.count(max(0, 100 - weeklyUsed) / 100 * perWeek), caption: L("Left this week"))
+                Spacer(minLength: 0)
+                InfoGlyph(text: L("From the 5-hour and weekly quota used on the same days; see Quota size in Usage insights."))
             }
         }
     }
@@ -693,12 +697,31 @@ struct ClaudeUsageInsightsSection: View {
     }
 }
 
+/// Keeps the insights between updates of the popover: they read the whole
+/// history, and the popover redraws on every change to the store. Held in
+/// `@State` without being observed.
+final class QuotaInsightsCache {
+    private var history: [ClaudeQuotaSeries]?
+    private var builtAt = Date.distantPast
+    private var insights: ClaudeQuotaInsights?
+
+    /// The insights for `history`, rebuilt when it changes or `now` moves on by more than `tolerance`.
+    func insights(history: [ClaudeQuotaSeries], now: Date, tolerance: TimeInterval = 30) -> ClaudeQuotaInsights? {
+        if history == self.history, abs(now.timeIntervalSince(builtAt)) < tolerance { return insights }
+        insights = ClaudeQuotaInsights.make(history: history, now: now)
+        self.history = history
+        builtAt = now
+        return insights
+    }
+}
+
 /// A personal summary of pace and habits, how large the official weekly
 /// allowance is in 5-hour windows and whether that changed, and when the
 /// quota gets used through the week.
 struct ClaudeUsageInsightsCard: View {
     let dashboard: ProviderDashboard
     let now: Date
+    @State private var cache = QuotaInsightsCache()
 
     private struct Tile: Identifiable {
         let id: String
@@ -710,7 +733,7 @@ struct ClaudeUsageInsightsCard: View {
     }
 
     var body: some View {
-        if let insights = ClaudeQuotaInsights.make(history: dashboard.claudeQuotaHistory, now: now),
+        if let insights = cache.insights(history: dashboard.claudeQuotaHistory, now: now),
            insights.habits.grid.contains(where: { $0.contains { $0 > 0 } })
         {
             DSCard(padding: 16) {

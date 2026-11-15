@@ -2,6 +2,15 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-14 额度趋势图滑动/悬停卡顿：测量与修复（已安装，2026-11-15 已提交到 main 并推送）
+
+- 测量：`Scripts/quota_trend_bench.swift`（构建方式同 ui_gallery，读真实额度历史副本，约 5.5k 条/通道）。修复前洞察样式每周视图每帧滑动 198 ms、悬停 187 ms，5 小时 38/31 ms；修复后 5.5/1.3 ms（p95 10/2 ms）。
+- 根因：`range` 等计算属性每次读取都重跑 `cycles()`（全量扫描），每帧几十次；`pace`（含作息预测）每帧算 4 次；悬停的 pointer 是视图 @State，鼠标一动整张卡片重算。
+- 修复：`ClaudeQuotaTrendFacts.swift` 的 `QuotaTrendFacts`/`QuotaTrendCache`（按历史、窗口、样式、订阅日期缓存，now 容差 30 s）；悬停改为 `QuotaPointer` ObservableObject，只有 `QuotaHoverLayer` 订阅；曲线 `ClaudeQuotaPlot` 改为单个 Canvas；抽稀对整条历史做一次（滑动时形状不再抖动）；洞察卡片 `QuotaInsightsCache`；`DS.dateFormatter`/`DS.moment` 缓存格式化器与提示文字。回归：`Scripts/quota_trend_facts_regression.swift`（已接入 test_cost_history_parser.sh，全部 PASS）。
+- 2026-11-15 续：用 `sample` 对单独的滑动循环取样，框架之外最重的是 Canvas 里直接画的文字（每帧重新排版）。百分比刻度、“重置”和作息月亮改为 Canvas `symbols:`；`QuotaRecordedStrip` 的提示文字和 `QuotaDayAxis` 的日期文字按区间/日期缓存。同一时段交替跑新旧版本（机器上另有一个占约 360% CPU 的 Python 进程，测得的绝对值比 11-14 高）：洞察每周滑动 10.0→8.5–9.0 ms（p95 19→15.5–17），5 小时 9.3→8.5–9.3 ms。剩下的时间主要花在 SwiftUI 视图图更新与 Core Animation 提交上。
+- 验证：HEAD 与工作树各编一个画廊二进制，渲染额度趋势全部状态，人工看图：曲线、标签、月亮、悬停一致。差异来自两次运行之间的新读数，以及整条历史统一抽稀后悬停吸附点偏移约 2 分钟。全套回归、各项 contract、provider auth、`git diff --check` 通过。`build_local_validation.sh` 通过，已安装 build 202611151051，旧版备份在 `/private/tmp/aiusagebar-install-backup.FYhW4e/AIUsageBar.app`。
+- 注意：画廊偶尔会遇到 Claude 快照缺账号身份（应是正赶上 App 刷新），额度趋势会显示“近 24 小时没有采样”，重跑即可，不是回归。
+
 ## 2026-11-13 Claude 用量长时间取不到：排查结果与刷新诊断日志
 
 - 现象：Claude 额度记录从 2026-11-12 15:09 到 11-13 10:39 一直没有新增（以往只有夜间断档），之后自己恢复。

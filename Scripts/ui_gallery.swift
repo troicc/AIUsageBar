@@ -81,9 +81,12 @@ enum UIGallery {
                 render(ProviderMenuMock(snapshot: snapshot, dashboard: dashboard), appearance: appearance,
                        output: output.appendingPathComponent("menu-\(snapshot.provider)-\(mode).png"))
                 render(ProviderDetailPopoverView(dashboard: dashboard, isRefreshing: false,
-                                                 refresh: {}, openDashboard: {}, openStatus: {}, openSettings: {})
-                        .frame(width: 390, height: 560),
+                                                 refresh: {}, openDashboard: {}, openStatus: {}, openSettings: {}),
                        appearance: appearance, output: output.appendingPathComponent("detail-\(snapshot.provider)-\(mode).png"))
+                render(ProviderDetailPopoverView(dashboard: dashboard, isRefreshing: false,
+                                                 refresh: {}, openDashboard: {}, openStatus: {}, openSettings: {},
+                                                 height: 3200),
+                       appearance: appearance, output: output.appendingPathComponent("detail-full-\(snapshot.provider)-\(mode).png"))
             }
             if let claude = snapshots.first(where: { $0.provider == "claude" }), let dashboard = dashboards[claude.id] {
                 for (window, back, pointer) in [("five-hour", 0.0, CGPoint?.none), ("weekly", 0, nil), ("five-hour", 86_400, nil),
@@ -227,28 +230,38 @@ private struct MenuMock: View {
     let snapshots: [ProviderSnapshot]
     let dashboards: [String: ProviderDashboard]
 
+    private var rows: [NativeMenuOverviewRow] {
+        snapshots.map { snapshot -> NativeMenuOverviewRow in
+            let dashboard = dashboards[snapshot.id] ?? DashboardParser.dashboard(snapshot: snapshot)
+            let window = snapshot.headlineQuotaWindow
+            let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel }
+                ?? dashboard.quotas.first { $0.windowMinutes != nil && $0.windowMinutes == window?.windowMinutes }
+                ?? dashboard.quotas.first
+            return NativeMenuOverviewRow(id: snapshot.id, providerID: snapshot.provider, title: snapshot.displayName,
+                                  account: snapshot.accountDisplayName, usedPercent: snapshot.headlineUsedPercent,
+                                  quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel, health: snapshot.serviceHealth,
+                                  hasError: snapshot.error != nil, resetsAt: headline?.resetsAt,
+                                  balanceText: dashboard.metrics.first { $0.id == "balance" && !DS.isPlaceholder($0) }?.value)
+        }.sorted { ($0.remainingPercent ?? 999) < ($1.remainingPercent ?? 999) }
+    }
+
     var body: some View {
         MenuChrome(items: [
-            ("-", nil), (L("Providers") + "  ▸", nil), (L("Open All Provider Details…"), nil), ("-", nil),
+            ("-", nil), (L("Open All Provider Details…"), nil), ("-", nil),
             (L("Refresh Now"), "⌘R"), (L("Settings…"), "⌘,"), (L("Check for Updates…"), nil), ("-", nil),
             (L("Quit AIUsageBar"), "⌘Q"),
         ]) {
             NativeMenuHeaderView(title: "AIUsageBar", subtitle: L("Updated %@ · %d enabled", "18:05", snapshots.count),
                                  providerID: nil, health: snapshots.map(\.serviceHealth).max(), refreshing: false)
-            NativeMenuOverviewView(
-                rows: snapshots.map { snapshot -> NativeMenuOverviewRow in
-                    let dashboard = dashboards[snapshot.id] ?? DashboardParser.dashboard(snapshot: snapshot)
-                    let window = snapshot.headlineQuotaWindow
-                    let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel }
-                        ?? dashboard.quotas.first { $0.windowMinutes != nil && $0.windowMinutes == window?.windowMinutes }
-                        ?? dashboard.quotas.first
-                    return NativeMenuOverviewRow(id: snapshot.id, providerID: snapshot.provider, title: snapshot.displayName,
-                                          account: snapshot.accountDisplayName, usedPercent: snapshot.headlineUsedPercent,
-                                          quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel, health: snapshot.serviceHealth,
-                                          hasError: snapshot.error != nil, resetsAt: headline?.resetsAt,
-                                          balanceText: dashboard.metrics.first { $0.id == "balance" && !DS.isPlaceholder($0) }?.value)
-                }.sorted { ($0.remainingPercent ?? 999) < ($1.remainingPercent ?? 999) },
-                totalCount: snapshots.count, quotaPresentation: .remaining, showAccount: true, showStatus: true)
+            Divider().padding(.vertical, 5).padding(.horizontal, 10)
+            // The first row as it looks under the pointer.
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                NativeMenuProviderRowView(row: row, quotaPresentation: .remaining, showAccount: true,
+                                          showStatus: true, highlighted: index == 0)
+                    .background(index == 0
+                                ? RoundedRectangle(cornerRadius: 4).fill(Color.accentColor).padding(.horizontal, 5)
+                                : nil)
+            }
         }
     }
 }

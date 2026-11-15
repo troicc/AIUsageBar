@@ -87,45 +87,9 @@ struct NativeMenuHeaderView: View {
     }
 }
 
-struct NativeMenuOverviewView: View {
-    let rows: [NativeMenuOverviewRow]
-    let totalCount: Int
-    let quotaPresentation: MenuQuotaPresentation
-    let showAccount: Bool
-    let showStatus: Bool
-    /// Rows whose quota just reset; their gauges play the fill-and-glow.
-    var celebrating: Set<String> = []
-
+/// Shown in place of the provider rows until a provider is set up.
+struct NativeMenuEmptyStateView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if rows.isEmpty {
-                emptyState
-            } else {
-                // Batteries-widget layout: one gauge per provider, side by side.
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4, alignment: .top),
-                                         count: min(4, max(rows.count, 3))),
-                          alignment: .center, spacing: 14) {
-                    ForEach(rows) { row in
-                        gaugeTile(row)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
-            }
-
-            if totalCount > rows.count {
-                Text(L("%d more in Providers", totalCount - rows.count))
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, NativeMenuLayout.inset)
-                    .padding(.bottom, 8)
-            }
-        }
-        .frame(width: NativeMenuLayout.width)
-    }
-
-    private var emptyState: some View {
         VStack(spacing: 6) {
             Image(systemName: "circle.dashed")
                 .font(.system(size: 30, weight: .ultraLight))
@@ -140,87 +104,7 @@ struct NativeMenuOverviewView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal, NativeMenuLayout.inset)
         .padding(.vertical, 16)
-    }
-
-    private func gaugeTile(_ row: NativeMenuOverviewRow) -> some View {
-        VStack(spacing: 6) {
-            ZStack {
-                let remaining = row.hasError ? nil : row.remainingPercent
-                let shown = remaining.map { quotaPresentation == .used ? 100 - $0 : $0 } ?? 0
-                AnimatedQuotaRing(percent: shown, color: DS.toneNSColor(remaining: remaining),
-                                  lineWidth: 5, diameter: 50,
-                                  celebrate: remaining != nil && celebrating.contains(row.id))
-                    .frame(width: 50 + QuotaRingLayerView.glowMargin * 2,
-                           height: 50 + QuotaRingLayerView.glowMargin * 2)
-                    .padding(-QuotaRingLayerView.glowMargin)
-                    // A new identity recreates the ring, which replays the
-                    // animation when a reset arrives with the menu open.
-                    .id("\(row.id)-\(celebrating.contains(row.id))")
-                if row.hasError {
-                    Image(systemName: "exclamationmark")
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundColor(Color(nsColor: .systemRed))
-                } else {
-                    ProviderLogoView(providerID: row.providerID, size: 20,
-                                     tint: ProviderBrand.logoTint(for: row.providerID))
-                }
-            }
-            .frame(width: 50, height: 50)
-
-            value(row)
-                .frame(height: 20)
-
-            VStack(spacing: 1) {
-                HStack(spacing: 3) {
-                    Text(row.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .lineLimit(1)
-                    if showStatus, row.health.isIncident {
-                        Circle().fill(DS.healthColor(row.health)).frame(width: 5, height: 5)
-                    }
-                }
-                Text(caption(row))
-                    .font(.system(size: 10))
-                    .foregroundColor(row.hasError ? Color(nsColor: .systemRed) : .secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func caption(_ row: NativeMenuOverviewRow) -> String {
-        if row.hasError { return L("Connection error") }
-        if row.remainingPercent == nil { return row.balanceText != nil ? L("Balance") : "—" }
-        if let resetsAt = row.resetsAt, let countdown = DS.countdown(to: resetsAt) {
-            return L("Resets in %@", countdown)
-        }
-        return row.quotaLabel ?? ""
-    }
-
-    @ViewBuilder
-    private func value(_ row: NativeMenuOverviewRow) -> some View {
-        if let remaining = row.remainingPercent, !row.hasError {
-            let shown = quotaPresentation == .used ? 100 - remaining : remaining
-            HStack(alignment: .firstTextBaseline, spacing: 1) {
-                Text(String(format: "%.0f", shown))
-                    .font(.system(size: 19, weight: .light, design: .rounded).monospacedDigit())
-                    .foregroundColor(remaining < 15 ? Color(nsColor: .systemRed) : .primary)
-                Text("%")
-                    .font(.system(size: 11, weight: .light, design: .rounded))
-                    .foregroundColor(.secondary)
-            }
-        } else if let balance = row.balanceText {
-            Text(balance)
-                .font(.system(size: 15, weight: .light, design: .rounded).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        } else {
-            Text("—")
-                .font(.system(size: 17, weight: .light, design: .rounded))
-                .foregroundColor(.secondary)
-        }
+        .frame(width: NativeMenuLayout.width)
     }
 }
 
@@ -407,5 +291,173 @@ struct NativeMenuProviderCardView: View {
         .padding(.horizontal, NativeMenuLayout.inset)
         .padding(.top, 4)
         .padding(.bottom, 2)
+    }
+}
+
+/// One provider written out in the main menu. Clicking it opens that
+/// provider's detail popover, so there is no submenu in between.
+struct NativeMenuProviderRowView: View {
+    let row: NativeMenuOverviewRow
+    let quotaPresentation: MenuQuotaPresentation
+    let showAccount: Bool
+    let showStatus: Bool
+    /// The quota just reset: the ring plays the fill-and-glow.
+    var celebrating = false
+    /// Drawn on the menu's accent highlight: everything turns white.
+    var highlighted: Bool = false
+
+    private var secondary: Color { highlighted ? Color.white.opacity(0.85) : .secondary }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderBadge(providerID: row.providerID, size: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(row.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    if showStatus, row.health.isIncident {
+                        Circle()
+                            .fill(highlighted ? Color.white : DS.healthColor(row.health))
+                            .frame(width: 6, height: 6)
+                    }
+                    if showAccount, let account = row.account {
+                        Text(account)
+                            .font(.system(size: 11))
+                            .foregroundColor(secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundColor(row.hasError && !highlighted ? Color(nsColor: .systemRed) : secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            trailing
+        }
+        .foregroundColor(highlighted ? .white : .primary)
+        .padding(.horizontal, NativeMenuLayout.inset)
+        .padding(.vertical, 5)
+        .frame(width: NativeMenuLayout.width, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var caption: String {
+        var parts: [String] = []
+        if row.hasError {
+            parts.append(L("Connection error"))
+        } else if row.remainingPercent != nil {
+            if let label = row.quotaLabel, !label.isEmpty { parts.append(label) }
+            if let resetsAt = row.resetsAt, let countdown = DS.countdown(to: resetsAt) {
+                parts.append(L("Resets in %@", countdown))
+            }
+        } else if row.balanceText != nil {
+            parts.append(L("Balance"))
+        }
+        return parts.isEmpty ? "—" : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        if row.hasError {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12))
+                .foregroundColor(highlighted ? .white : Color(nsColor: .systemRed))
+        } else if let remaining = row.remainingPercent {
+            let shown = quotaPresentation == .used ? 100 - remaining : remaining
+            HStack(spacing: 8) {
+                Text(String(format: "%.0f%%", shown))
+                    .font(.system(size: 14, weight: .regular, design: .rounded).monospacedDigit())
+                    .foregroundColor(remaining < 15 && !highlighted ? Color(nsColor: .systemRed) : nil)
+                // Core Animation ring: it keeps animating while the menu tracks.
+                AnimatedQuotaRing(percent: shown,
+                                  color: highlighted ? .white : DS.toneNSColor(remaining: remaining),
+                                  lineWidth: 2.5, diameter: 18,
+                                  celebrate: celebrating)
+                    .frame(width: 18 + QuotaRingLayerView.glowMargin * 2,
+                           height: 18 + QuotaRingLayerView.glowMargin * 2)
+                    .padding(-QuotaRingLayerView.glowMargin)
+                    // A new identity replays the reset when it arrives with the menu open.
+                    .id("\(row.id)-\(celebrating)")
+            }
+        } else if let balance = row.balanceText {
+            Text(balance)
+                .font(.system(size: 13, weight: .regular, design: .rounded).monospacedDigit())
+                .lineLimit(1)
+        } else {
+            Text("—").foregroundColor(secondary)
+        }
+    }
+}
+
+/// Hosts a clickable SwiftUI row in an NSMenu. A menu item with a view gets
+/// no highlight of its own, so this draws the system selection behind the
+/// row, and a click sends the item's action like a standard item does.
+final class MenuActionRowView: NSView {
+    private let selection = NSVisualEffectView()
+    private let hosting: NSHostingView<AnyView>
+    private let content: (Bool) -> AnyView
+    private(set) var isHighlighted = false
+
+    init(content: @escaping (Bool) -> AnyView) {
+        self.content = content
+        hosting = NSHostingView(rootView: content(false))
+        super.init(frame: .zero)
+        selection.material = .selection
+        selection.state = .active
+        selection.isEmphasized = true
+        selection.blendingMode = .behindWindow
+        selection.maskImage = Self.roundedMask(radius: 4)
+        selection.isHidden = true
+        addSubview(selection)
+        addSubview(hosting)
+        reload()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Rebuilds the row from current data and resizes it to fit.
+    func reload() {
+        hosting.rootView = content(isHighlighted)
+        let height = max(1, hosting.fittingSize.height)
+        frame = NSRect(x: 0, y: 0, width: NativeMenuLayout.width, height: height)
+        hosting.frame = bounds
+        // Same inset and corner as the native highlight since Big Sur.
+        selection.frame = bounds.insetBy(dx: 5, dy: 0)
+    }
+
+    func setHighlighted(_ highlighted: Bool) {
+        guard highlighted != isHighlighted else { return }
+        isHighlighted = highlighted
+        selection.isHidden = !highlighted
+        hosting.rootView = content(highlighted)
+    }
+
+    /// The row has no controls of its own: every click lands here.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        frame.contains(point) ? self : nil
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let item = enclosingMenuItem, let menu = item.menu else { return }
+        let index = menu.index(of: item)
+        menu.cancelTracking()
+        if index >= 0 { menu.performActionForItem(at: index) }
+    }
+
+    private static func roundedMask(radius: CGFloat) -> NSImage {
+        let edge = radius * 2 + 1
+        let image = NSImage(size: NSSize(width: edge, height: edge), flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+            return true
+        }
+        image.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+        image.resizingMode = .stretch
+        return image
     }
 }

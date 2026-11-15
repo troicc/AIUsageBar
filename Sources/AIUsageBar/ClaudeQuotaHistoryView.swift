@@ -3,10 +3,14 @@ import SwiftUI
 struct ClaudeQuotaCoverageView: View {
     let dashboard: ProviderDashboard
 
-    var body: some View {
-        Text(L(dashboard.hasClaudeSharedQuota
+    static func note(for dashboard: ProviderDashboard) -> String {
+        L(dashboard.hasClaudeSharedQuota
             ? "Shared by web, desktop and Claude Code on this account. Web chat has no separate token or cost breakdown here."
-            : "Shared quota unavailable. Local logs do not include web chat tokens or costs."))
+            : "Shared quota unavailable. Local logs do not include web chat tokens or costs.")
+    }
+
+    var body: some View {
+        Text(Self.note(for: dashboard))
             .font(.system(size: 10)).foregroundColor(.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -41,11 +45,16 @@ struct ClaudeQuotaHistoryView: View {
     let now: Date
     /// Overrides the display style chosen in Settings, for previews.
     private let forcedMode: QuotaChartMode?
+    /// Off where the quota rows above already show what is left: the
+    /// headline then keeps only the reset, forecast and pace.
+    private let showsHeadline: Bool
 
     /// `expanded` is kept for callers; the trend is always shown now.
     init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour",
-         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil, mode: QuotaChartMode? = nil, day: Date? = nil) {
+         scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil, mode: QuotaChartMode? = nil, day: Date? = nil,
+         showsHeadline: Bool = true) {
         self.dashboard = dashboard
+        self.showsHeadline = showsHeadline
         self.now = now
         forcedMode = mode
         _selected = State(initialValue: window)
@@ -85,9 +94,11 @@ struct ClaudeQuotaHistoryView: View {
 
     var body: some View {
         let facts = self.facts
-        DSCard(padding: showsInsights ? 16 : 14) {
+        // No card: the section header's hairline sets it apart.
+        Group {
             if showsInsights { insightsLayout(facts) } else { classicLayout(facts) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: selected) { _ in
             pan = 0
             selectedDay = nil
@@ -107,11 +118,7 @@ struct ClaudeQuotaHistoryView: View {
     }
 
     private func header(_ facts: QuotaTrendFacts) -> some View {
-        HStack(alignment: .center) {
-            Label(title(facts), systemImage: "chart.xyaxis.line")
-                .font(.system(size: 12, weight: .semibold))
-            if showsInsights { InfoGlyph(text: sharedNote) }
-            Spacer()
+        DSSectionHeader(title: title(facts), info: showsInsights ? sharedNote : nil) {
             if dashboard.claudeQuotaHistory.count > 1 {
                 QuotaWindowSwitch(series: dashboard.claudeQuotaHistory, selected: $selected)
             }
@@ -155,7 +162,8 @@ struct ClaudeQuotaHistoryView: View {
         return VStack(alignment: .leading, spacing: 14) {
             header(facts)
             if let lane = facts.lane, let series = series, let last = lane.samples.last {
-                QuotaTrendHero(title: lane.title, last: last, pace: facts.pace, isWeekly: facts.isWeekly, now: facts.now)
+                QuotaTrendHero(title: lane.title, last: last, pace: facts.pace, isWeekly: facts.isWeekly, now: facts.now,
+                               showsRemaining: showsHeadline)
                 insightChart(series, facts: facts)
                 footer(lane, facts: facts)
             } else {
@@ -175,7 +183,7 @@ struct ClaudeQuotaHistoryView: View {
                 ClaudeProductBreakdownView(breakdown: official)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    DSSectionLabel(title: L("Where it went"), symbol: "chart.pie")
+                    DSSectionLabel(title: L("Where it went"))
                     legend(lane)
                 }
             }
@@ -358,8 +366,7 @@ struct ClaudeQuotaHistoryView: View {
                 QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: hasCompanion).padding(.top, 6)
             }
         }
-        .padding(EdgeInsets(top: 10, leading: 10, bottom: 12, trailing: 8))
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
+        .padding(.top, 2)
     }
 
     /// How many full 5-hour windows a week holds, and how many are left in this one.

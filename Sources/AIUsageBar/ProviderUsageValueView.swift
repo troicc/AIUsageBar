@@ -82,20 +82,18 @@ struct ProviderUsageValueCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ProviderDetailSectionTitle(title: title, symbol: "dollarsign.circle")
+        VStack(alignment: .leading, spacing: 12) {
+            // The method note sits behind the ⓘ, like the other sections.
+            ProviderDetailSectionTitle(title: title, info: L(cloud != nil
+                ? "Local Claude Code logs plus the included cloud credit spent, from its balance at each refresh; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill."
+                : dashboard.id == "claude"
+                ? "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account."
+                : "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account."))
             if let cycleText = cycleText {
                 Text(cycleText).font(.system(size: 10)).foregroundColor(.secondary)
             }
             comparison
             subscriptionEditor
-            Text(L(cloud != nil
-                ? "Local Claude Code logs plus the included cloud credit spent, from its balance at each refresh; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill."
-                : dashboard.id == "claude"
-                ? "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account."
-                : "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account."))
-                .font(.system(size: 9)).foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             if total?.isPartial == true {
                 Text(L("Partial estimate · known costs only"))
                     .font(.system(size: 10)).foregroundColor(.secondary)
@@ -105,7 +103,6 @@ struct ProviderUsageValueCard: View {
                     ?? L("Exchange rate unavailable · showing USD"))
                     .font(.system(size: 9)).foregroundColor(.secondary)
             }
-            Divider()
             DisclosureGroup(isExpanded: $modelsExpanded) {
                 modelRows.padding(.top, 8)
             } label: {
@@ -113,17 +110,14 @@ struct ProviderUsageValueCard: View {
                     .font(.system(size: 11, weight: .medium))
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous).fill(Color.primary.opacity(0.045)))
-        .overlay(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var comparison: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(usageCostText(total, display: currency.display))
-                    .font(.system(size: 21, weight: .semibold, design: .rounded))
+                    .font(.system(size: 24, weight: .light, design: .rounded))
                     .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
                 if let cloud = cloud {
                     Text(L("Local %@ · cloud %@", usageCostText(estimate, display: currency.display),
@@ -144,7 +138,7 @@ struct ProviderUsageValueCard: View {
                 if let multiple = multiple {
                     Text((total?.isPartial == true ? "≥" : "")
                          + String(format: "%.2f×", multiple))
-                        .font(.system(size: 21, weight: .semibold, design: .rounded))
+                        .font(.system(size: 24, weight: .light, design: .rounded))
                         .monospacedDigit().lineLimit(1).minimumScaleFactor(0.75)
                         .foregroundColor(ProviderBrand.color(for: dashboard.id))
                     Text(L("of monthly fee"))
@@ -170,7 +164,7 @@ struct ProviderUsageValueCard: View {
                     .font(.system(size: 10)).buttonStyle(BorderlessButtonStyle())
                     .disabled(editingFee && fee == nil && !feeText.isEmpty)
             }
-            if editingFee || fee == nil {
+            if editingFee || (!feeText.isEmpty && fee == nil) {
                 HStack {
                     Text(L("Monthly fee · USD")).font(.system(size: 10)).foregroundColor(.secondary)
                     Spacer()

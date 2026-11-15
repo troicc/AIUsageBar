@@ -26,8 +26,6 @@ final class MenuController: NSObject, NSMenuDelegate {
     /// so an open menu follows refreshes instead of showing stale content.
     private var liveUpdaters: [ObjectIdentifier: [() -> Void]] = [:]
     private var liveUpdateScheduled = false
-    /// Provider submenus under "Providers" are filled only when opened.
-    private var lazyProviderMenus: [ObjectIdentifier: String] = [:]
     private var storeObservation: AnyCancellable?
     /// Providers whose gauges play the reset animation in the open menu.
     private var activeCelebrations: Set<String> = []
@@ -331,25 +329,23 @@ final class MenuController: NSObject, NSMenuDelegate {
         }.joined(separator: "\n")
     }
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        guard let snapshotID = lazyProviderMenus[ObjectIdentifier(menu)],
-              let snapshot = store.snapshots.first(where: { $0.id == snapshotID })
-        else { return }
-        resetMenu(menu)
-        populateProviderMenu(menu, snapshot: snapshot, includeQuit: false)
-        if snapshot.provider == "claude" { store.loadClaudeAccountUsageIfNeeded() }
+    /// Provider rows are custom views, so they follow the menu's highlight
+    /// (mouse or arrow keys) through here.
+    func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        for candidate in menu.items {
+            (candidate.view as? MenuActionRowView)?.setHighlighted(candidate === item)
+        }
     }
 
     func menuDidClose(_ menu: NSMenu) {
         openMenus.remove(ObjectIdentifier(menu))
+        for item in menu.items { (item.view as? MenuActionRowView)?.setHighlighted(false) }
         if openMenus.isEmpty { activeCelebrations.removeAll() }
     }
 
     func menuWillOpen(_ menu: NSMenu) {
         if openMenus.isEmpty { activeCelebrations = store.takeResetCelebrations() }
         openMenus.insert(ObjectIdentifier(menu))
-        // Provider submenus are filled in menuNeedsUpdate; they are not roots.
-        if lazyProviderMenus[ObjectIdentifier(menu)] != nil { return }
         let context = menuContexts[ObjectIdentifier(menu)] ?? Self.mergedMenuContext
         let providerID = context == Self.mergedMenuContext ? nil : context
         lastMenuProviderID = providerID
@@ -470,7 +466,6 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private func populate(menu: NSMenu, providerID: String?) {
         resetMenu(menu)
-        lazyProviderMenus.removeAll()
         if let providerID = providerID,
            let snapshot = store.snapshots.first(where: { $0.id == providerID })
         {
@@ -493,52 +488,31 @@ final class MenuController: NSObject, NSMenuDelegate {
                 refreshing: self.store.isRefreshing)
         })
 
-        menu.addItem(hostedMenuItem(in: menu) { [unowned self] () -> NativeMenuOverviewView in
-            let rows = self.overviewRows().prefix(Preferences.shared.overviewProviderLimit)
-            return NativeMenuOverviewView(
-                rows: Array(rows),
-                totalCount: self.store.snapshots.count,
-                quotaPresentation: Preferences.shared.menuQuotaPresentation,
-                showAccount: Preferences.shared.showAccountInMenu,
-                showStatus: Preferences.shared.showServiceStatus,
-                celebrating: self.activeCelebrations)
-        })
         menu.addItem(.separator())
 
         if store.snapshots.isEmpty {
+            menu.addItem(hostedMenuItem(in: menu) { NativeMenuEmptyStateView() })
+            menu.addItem(.separator())
             menu.addItem(menuItem(
                 title: L("Set Up Providers…"),
                 action: #selector(setUpProvidersMenuItem),
                 symbol: "plus.circle"))
             menu.addItem(.separator())
-        }
-
-        if !store.snapshots.isEmpty {
-            let providersItem = NSMenuItem(title: L("Providers"), action: nil, keyEquivalent: "")
-            let providersMenu = NSMenu(title: L("Providers"))
-            for snapshot in store.snapshots {
-                let item = NSMenuItem(
-                    title: providerMenuTitle(snapshot),
-                    action: nil,
-                    keyEquivalent: "")
-                item.image = ProviderLogo.templateImage(for: snapshot.provider, size: 16)
-                    ?? NSImage(systemSymbolName: ProviderBrand.symbol(for: snapshot.provider),
-                               accessibilityDescription: snapshot.displayName)
-                item.image?.isTemplate = true
-                // Filled on demand in menuNeedsUpdate: building every provider
-                // card up front made each menu open slow with many accounts.
-                let submenu = NSMenu(title: snapshot.displayName)
-                submenu.autoenablesItems = false
-                submenu.delegate = self
-                lazyProviderMenus[ObjectIdentifier(submenu)] = snapshot.id
-                item.submenu = submenu
-                providersMenu.addItem(item)
+        } else {
+            // Providers are written out here, tightest quota first; a click
+            // opens that provider's detail popover directly.
+            let rows = overviewRows()
+            let limit = Preferences.shared.overviewProviderLimit
+            for row in rows.prefix(limit) {
+                menu.addItem(providerRowItem(in: menu, snapshotID: row.id))
             }
-            providersItem.submenu = providersMenu
-            menu.addItem(providersItem)
-        }
-
-        if !store.snapshots.isEmpty {
+            if rows.count > limit {
+                let more = NSMenuItem(title: L("%d more in All Provider Details", rows.count - limit),
+                                      action: nil, keyEquivalent: "")
+                more.isEnabled = false
+                menu.addItem(more)
+            }
+            menu.addItem(.separator())
             menu.addItem(menuItem(
                 title: L("Open All Provider Details…"),
                 action: #selector(openAllDetailsMenuItem),
@@ -645,18 +619,44 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func providerMenuTitle(_ snapshot: ProviderSnapshot) -> String {
-        var title = snapshot.displayName
-        if Preferences.shared.showAccountInMenu, let account = snapshot.accountDisplayName {
-            title += " — \(account)"
+    /// A clickable provider row for the main menu, kept current while the
+    /// menu is open. The rows are not re-sorted live, only their values.
+    private func providerRowItem(in menu: NSMenu, snapshotID: String) -> NSMenuItem {
+        let item = NSMenuItem(title: "", action: #selector(openProviderDetailsMenuItem(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = snapshotID
+        let currentRow: () -> NativeMenuOverviewRow? = { [unowned self] in
+            self.overviewRows().first { $0.id == snapshotID }
         }
-        if let used = snapshot.headlineUsedPercent {
-            let value = Preferences.shared.menuQuotaPresentation == .used ? used : 100 - used
-            let label = snapshot.headlineQuotaLabel.map { "  \($0)" } ?? ""
-            title += label + String(format: "  %.0f%%", max(0, min(100, value)))
+        let row = MenuActionRowView { highlighted in
+            guard let row = currentRow() else { return AnyView(EmptyView()) }
+            return AnyView(NativeMenuProviderRowView(
+                row: row,
+                quotaPresentation: Preferences.shared.menuQuotaPresentation,
+                showAccount: Preferences.shared.showAccountInMenu,
+                showStatus: Preferences.shared.showServiceStatus,
+                celebrating: self.activeCelebrations.contains(row.id),
+                highlighted: highlighted)
+                .fixedSize(horizontal: false, vertical: true))
         }
-        if Preferences.shared.showServiceStatus, snapshot.hasVisibleAlert { title += "  ⚠" }
-        return title
+        let describe = { [weak item, weak row] in
+            guard let current = currentRow() else { return }
+            let title = current.account.map { "\(current.title), \($0)" } ?? current.title
+            item?.title = title
+            row?.setAccessibilityElement(true)
+            row?.setAccessibilityRole(.menuItem)
+            row?.setAccessibilityLabel(title)
+            row?.setAccessibilityHelp(L("Open Detailed Dashboard…"))
+        }
+        describe()
+        item.view = row
+        registerLiveUpdate(in: menu) { [weak row, weak item, weak menu] in
+            guard let row = row, let item = item else { return }
+            row.reload()
+            describe()
+            menu?.itemChanged(item)
+        }
+        return item
     }
 
     /// Overview rows with the tightest quota first, so the provider that is
@@ -864,17 +864,22 @@ final class MenuController: NSObject, NSMenuDelegate {
         var failures: [String] = []
         let overview = NSMenu(title: "Runtime Smoke Overview")
         populateOverviewMenu(overview)
-        let overviewHostedViews = overview.items.compactMap(\.view)
-        if overviewHostedViews.count < 2 {
-            failures.append("overview hosted rows missing")
+        let overviewHostedViews = overview.items.compactMap(\.view).filter { !($0 is MenuActionRowView) }
+        if overviewHostedViews.isEmpty {
+            failures.append("overview header missing")
         }
         if overviewHostedViews.contains(where: { $0.frame.width < 300 || $0.frame.height < 20 }) {
             failures.append("overview hosted row has invalid size")
         }
-        if !store.snapshots.isEmpty,
-           !overview.items.contains(where: { $0.title == L("Providers") && $0.submenu != nil })
-        {
-            failures.append("providers submenu missing")
+        let providerRows = overview.items.filter { $0.view is MenuActionRowView }
+        if providerRows.count != min(store.snapshots.count, Preferences.shared.overviewProviderLimit) {
+            failures.append("provider rows missing")
+        }
+        if providerRows.contains(where: {
+            $0.action != #selector(openProviderDetailsMenuItem(_:)) || $0.representedObject as? String == nil
+                || $0.view!.frame.width < 300 || $0.view!.frame.height < 20
+        }) {
+            failures.append("provider row does not open its detail popover")
         }
 
         if let snapshot = store.snapshots.first {

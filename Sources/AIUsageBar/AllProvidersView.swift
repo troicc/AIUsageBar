@@ -128,7 +128,7 @@ struct AllProviderCard: View {
             }
             if dashboard.id == "claude" {
                 claudeQuotaContent
-                ProviderDetailSectionTitle(title: dashboard.summarySectionTitle, symbol: "rectangle.grid.2x2")
+                ProviderDetailSectionTitle(title: dashboard.summarySectionTitle)
             }
             if !visibleMetrics.isEmpty {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 125), spacing: 8, alignment: .leading)],
@@ -140,7 +140,7 @@ struct AllProviderCard: View {
             }
             if dashboard.id != "claude" {
                 ForEach(dashboard.quotas) { lane in
-                    ProviderDetailQuotaRow(lane: lane, color: tint, framed: false)
+                    ProviderDetailQuotaRow(lane: lane, color: tint)
                 }
             }
             DashboardTopModelsView(dashboard: dashboard)
@@ -172,12 +172,12 @@ struct AllProviderCard: View {
 
     private var claudeQuotaContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ProviderDetailSectionTitle(title: dashboard.quotaSectionTitle, symbol: "gauge")
+            ProviderDetailSectionTitle(title: dashboard.quotaSectionTitle)
             ForEach(dashboard.quotas) { lane in
-                ProviderDetailQuotaRow(lane: lane, color: tint, framed: false)
+                ProviderDetailQuotaRow(lane: lane, color: tint)
             }
             ClaudeQuotaCoverageView(dashboard: dashboard)
-            ClaudeQuotaHistoryView(dashboard: dashboard)
+            ClaudeQuotaHistoryView(dashboard: dashboard, showsHeadline: false)
             ClaudeUsageInsightsSection(dashboard: dashboard)
         }
     }

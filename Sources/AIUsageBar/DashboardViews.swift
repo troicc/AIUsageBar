@@ -4,6 +4,8 @@ import SwiftUI
 struct LiveProviderDetailPopoverView: View {
     @ObservedObject var store: DashboardStore
     let snapshotID: String
+    /// Told the height the panel needs, so the popover can fit it.
+    var onHeight: ((CGFloat) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -14,7 +16,8 @@ struct LiveProviderDetailPopoverView: View {
                     refresh: { Task { await store.refresh() } },
                     openDashboard: { store.openDashboardURL() },
                     openStatus: { store.openStatusURL() },
-                    openSettings: { store.onOpenSettings?() })
+                    openSettings: { store.onOpenSettings?() },
+                    onHeight: onHeight)
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "person.crop.circle.badge.xmark")
@@ -41,112 +44,165 @@ struct ProviderDetailPopoverView: View {
     let openDashboard: () -> Void
     let openStatus: () -> Void
     let openSettings: () -> Void
+    /// The most the panel grows to; shorter content gets a shorter panel.
+    /// The gallery passes a large value to render all of it.
+    var height: CGFloat = 560
+    var onHeight: ((CGFloat) -> Void)? = nil
+    @State private var headerHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
 
-    private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+    /// Fits the content until it reaches `height`, then scrolls.
+    private var fittedHeight: CGFloat {
+        contentHeight > 0 ? min(height, (headerHeight + contentHeight).rounded(.up)) : height
+    }
+
     private var tint: Color { ProviderBrand.color(for: dashboard.id) }
 
+    /// One surface, no cards: sections are set apart by a hairline and a
+    /// title, and the numbers carry the hierarchy.
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().opacity(0.6)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: DetailHeaderHeightKey.self, value: proxy.size.height)
+                })
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 14) {
                     statusContent
+                    balanceHero
+                    quotaContent
                     if dashboard.id == "claude" {
-                        quotaContent
-                        ClaudeQuotaCoverageView(dashboard: dashboard)
-                        ClaudeQuotaHistoryView(dashboard: dashboard)
+                        ClaudeQuotaHistoryView(dashboard: dashboard, showsHeadline: false)
                         ClaudeUsageInsightsSection(dashboard: dashboard)
                     }
-                    balanceHero
-                    if dashboard.id != "claude" { quotaContent }
                     metricsContent
-                    DashboardTopModelsView(dashboard: dashboard)
                     ProviderUsageValueView(dashboard: dashboard)
                     SubscriptionTimingView(dashboard: dashboard)
                     historyContent
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(14)
+                .padding(.horizontal, 20)
+                .padding(.top, 4)
+                .padding(.bottom, 22)
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: DetailContentHeightKey.self, value: proxy.size.height)
+                })
             }
-            Divider().opacity(0.6)
-            actionBar
         }
-        .frame(width: 390, height: 560)
+        .frame(width: 390, height: fittedHeight)
         .background(Color(nsColor: NSColor.windowBackgroundColor))
+        .onPreferenceChange(DetailHeaderHeightKey.self) { headerHeight = $0 }
+        .onPreferenceChange(DetailContentHeightKey.self) { contentHeight = $0 }
+        .onChange(of: fittedHeight) { onHeight?($0) }
     }
 
+    // MARK: Header
+
+    private var account: String? {
+        dashboard.accountLabel.flatMap { $0 == "Default" ? nil : $0 }
+    }
+
+    /// Identity on the left, the actions as quiet icons on the right.
     private var header: some View {
-        HStack(spacing: 12) {
-            ProviderBadge(providerID: dashboard.id, size: 44)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: 12) {
+            ProviderBadge(providerID: dashboard.id, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(dashboard.title)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(.system(size: 16, weight: .semibold))
                         .lineLimit(1)
-                    if let plan = dashboard.planLabel {
-                        DSChip(text: plan, tint: tint)
+                    if let plan = dashboard.planLabel, !plan.isEmpty {
+                        Text(plan.uppercased())
+                            .font(.system(size: 9, weight: .bold))
+                            .tracking(0.6)
+                            .foregroundColor(tint)
                             .help(L("Subscription plan: %@", plan))
                     }
+                    if let health = dashboard.serviceStatus?.health, health != .unknown {
+                        DSHealthDot(health: health, size: 6)
+                            .help(health == .operational ? L("All systems normal")
+                                  : dashboard.serviceStatus?.displayText ?? health.title)
+                    }
                 }
-                if let account = dashboard.accountLabel, account != "Default" {
-                    Text(account)
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                // Only the account shortens; the freshness always shows.
+                HStack(spacing: 0) {
+                    if let account = account {
+                        Text(account)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(account)
+                        Text(" · ")
+                    }
+                    Text(dashboard.updatedText)
                         .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(account)
+                        .fixedSize()
                 }
-                Text(dashboard.updatedText)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
             }
-            Spacer(minLength: 6)
-            if isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel(Text(L("Refreshing provider usage")))
-            } else if let health = dashboard.serviceStatus?.health, health == .operational {
-                DSChip(text: L("All systems normal"), symbol: health.symbolName, tint: DS.healthColor(health))
+            Spacer(minLength: 8)
+            HStack(spacing: 0) {
+                if isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                        .frame(width: 28, height: 28)
+                        .accessibilityLabel(Text(L("Refreshing provider usage")))
+                } else {
+                    DetailIconButton(symbol: "arrow.clockwise", help: L("Refresh"), action: refresh)
+                        .keyboardShortcut("r", modifiers: .command)
+                }
+                if dashboard.dashboardURL != nil {
+                    DetailIconButton(symbol: "arrow.up.right", help: L("Web dashboard"), action: openDashboard)
+                }
+                if dashboard.statusURL != nil {
+                    DetailIconButton(symbol: "waveform.path.ecg", help: L("Status Page"), action: openStatus)
+                }
+                DetailIconButton(symbol: "gearshape", help: L("Provider Settings"), action: openSettings)
+                    .keyboardShortcut(",", modifiers: .command)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(
-            LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.0)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing))
+        .padding(.leading, 20)
+        .padding(.trailing, 14)
+        .padding(.top, 16)
+        .padding(.bottom, 8)
     }
 
+    // MARK: Sections
+
+    /// Incidents and connection errors: a colored line, not a box.
     @ViewBuilder
     private var statusContent: some View {
         if let status = dashboard.serviceStatus, status.health.isIncident {
-            DSCard(padding: 10, tint: DS.healthColor(status.health)) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: status.health.symbolName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(DS.healthColor(status.health))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(status.health.title)
-                            .font(.system(size: 12, weight: .semibold))
-                        Text(status.displayText)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
+            notice(symbol: status.health.symbolName, tint: DS.healthColor(status.health),
+                   title: status.health.title, detail: status.displayText)
         }
         if let error = dashboard.errorMessage {
-            DSCard(padding: 10, tint: Color(nsColor: .systemRed)) {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(Color(nsColor: .systemRed))
-                    Text(error)
-                        .font(.system(size: 11, weight: .medium))
-                    Spacer(minLength: 0)
+            notice(symbol: "exclamationmark.triangle.fill", tint: Color(nsColor: .systemRed),
+                   title: error, detail: nil)
+        }
+    }
+
+    private func notice(symbol: String, tint: Color, title: String, detail: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(tint)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Spacer(minLength: 0)
         }
+        .padding(.top, 8)
     }
 
     private var balanceMetric: DashboardMetric? {
@@ -158,183 +214,142 @@ struct ProviderDetailPopoverView: View {
     @ViewBuilder
     private var balanceHero: some View {
         if let balance = balanceMetric {
-            HStack(alignment: .center, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(balance.title, systemImage: "creditcard.fill")
-                        .font(.system(size: 11, weight: .semibold))
+            DSSectionHeader(title: balance.title)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(balance.value)
+                    .font(.system(size: 34, weight: .light, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                if let subtitle = balance.subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
                         .foregroundColor(.secondary)
-                    Text(balance.value)
-                        .font(DS.numeral(32, weight: .bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    if let subtitle = balance.subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                    }
                 }
-                Spacer(minLength: 0)
-                Image(systemName: balance.value.contains("¥") || balance.value.contains("￥")
-                      ? "yensign.circle.fill" : "dollarsign.circle.fill")
-                    .font(.system(size: 40, weight: .regular))
-                    .foregroundStyle(.white, tint)
             }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-                    .fill(LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.06)],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing)))
-            .overlay(
-                RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-                    .strokeBorder(tint.opacity(0.25), lineWidth: 0.5))
             .accessibilityElement(children: .combine)
-        }
-    }
-
-    @ViewBuilder
-    private var metricsContent: some View {
-        let visible = dashboard.metrics.filter { !DS.isPlaceholder($0) && $0.id != balanceMetric?.id }
-        if !dashboard.metrics.isEmpty {
-            ProviderDetailSectionTitle(title: dashboard.summarySectionTitle, symbol: "rectangle.grid.2x2")
-            if visible.isEmpty {
-                Text(dashboard.metrics.compactMap(\.subtitle).first ?? L("No usage data yet"))
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            } else {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
-                    ForEach(visible) { metric in
-                        ProviderDetailMetricCell(metric: metric)
-                    }
-                }
-            }
         }
     }
 
     @ViewBuilder
     private var quotaContent: some View {
         if !dashboard.quotas.isEmpty {
-            ProviderDetailSectionTitle(title: dashboard.quotaSectionTitle, symbol: "gauge")
-            let rings = Array(dashboard.quotas.prefix(3))
-            DSCard(padding: 12) {
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(rings) { lane in
-                        VStack(spacing: 6) {
-                            UsageRing(remaining: lane.remainingPercent, size: 70, lineWidth: 7)
-                            Text(lane.title)
-                                .font(.system(size: 11, weight: .semibold))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                            if let resetsAt = lane.resetsAt, let countdown = DS.countdown(to: resetsAt) {
-                                Text(L("Resets in %@", countdown))
-                                    .font(.system(size: 10))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.8)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .accessibilityElement(children: .combine)
-                    }
+            DSSectionHeader(title: dashboard.quotaSectionTitle,
+                            info: dashboard.id == "claude" ? ClaudeQuotaCoverageView.note(for: dashboard) : nil)
+            VStack(spacing: 16) {
+                ForEach(dashboard.quotas) { lane in
+                    ProviderDetailQuotaRow(lane: lane, color: tint)
                 }
             }
-            if let pace = rings.compactMap({ lane in lane.paceDescription().map { (lane, $0) } }).first {
-                Label(pace.1, systemImage: "speedometer")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(DS.tone(remaining: pace.0.remainingPercent))
-            }
-            if dashboard.quotas.count > rings.count {
-                VStack(spacing: 8) {
-                    ForEach(dashboard.quotas.dropFirst(rings.count)) { lane in
-                        ProviderDetailQuotaRow(lane: lane, color: tint)
+        } else if dashboard.id == "claude" {
+            ClaudeQuotaCoverageView(dashboard: dashboard)
+        }
+    }
+
+    @ViewBuilder
+    private var metricsContent: some View {
+        let visible = dashboard.metrics.filter { !DS.isPlaceholder($0) && $0.id != balanceMetric?.id }
+        if !dashboard.metrics.isEmpty && !(visible.isEmpty && balanceMetric != nil) {
+            DSSectionHeader(title: dashboard.summarySectionTitle)
+            if visible.isEmpty {
+                Text(dashboard.metrics.compactMap(\.subtitle).first ?? L("No usage data yet"))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)],
+                          alignment: .leading, spacing: 16) {
+                    ForEach(visible) { metric in
+                        ProviderDetailMetricCell(metric: metric)
                     }
                 }
             }
         }
+        DashboardTopModelsView(dashboard: dashboard)
     }
 
     @ViewBuilder
     private var historyContent: some View {
         let series = dashboardHistorySeries(for: dashboard)
         if !series.isEmpty {
-            ProviderDetailSectionTitle(title: dashboard.historySectionTitle, symbol: "chart.xyaxis.line")
-            Text(L(dashboard.id == "claude" || dashboard.id == "codex"
+            DSSectionHeader(title: dashboard.historySectionTitle, info: L(dashboard.id == "claude" || dashboard.id == "codex"
                 ? "Local model usage · estimated API cost, not your bill. Partial estimates show known costs; fully unknown costs appear as gaps. Claude excludes other models; logs cannot verify the billing account."
                 : "Each chart is labeled and scaled independently."))
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(spacing: 12) {
+            VStack(spacing: 22) {
                 ForEach(series) { item in
                     ProviderHistorySeriesView(series: item)
                 }
             }
         }
     }
+}
 
-    private var actionBar: some View {
-        HStack(spacing: 8) {
-            Button(action: refresh) {
-                Label(L(isRefreshing ? "Refreshing…" : "Refresh"), systemImage: "arrow.clockwise")
-            }
-            .keyboardShortcut("r", modifiers: .command)
-            .disabled(isRefreshing)
-            Button(action: openDashboard) {
-                Label(L("Web dashboard"), systemImage: "arrow.up.right.square")
-            }
-            .disabled(dashboard.dashboardURL == nil)
-            Spacer()
-            if dashboard.statusURL != nil {
-                Button(action: openStatus) {
-                    Image(systemName: "waveform.path.ecg")
-                }
-                .help(L("Open status page"))
-                .accessibilityLabel(Text(L("Status Page")))
-            }
-            Button(action: openSettings) {
-                Image(systemName: "gearshape")
-            }
-            .keyboardShortcut(",", modifiers: .command)
-            .help(L("Open provider settings"))
-            .accessibilityLabel(Text(L("Provider Settings")))
+private struct DetailHeaderHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct DetailContentHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// A borderless icon action; a faint circle shows on hover.
+private struct DetailIconButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12.5, weight: .medium))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.primary.opacity(hovering ? 0.08 : 0)))
+                .contentShape(Circle())
         }
-        .font(.system(size: 12, weight: .medium))
-        .controlSize(.regular)
-        .buttonStyle(.bordered)
-        .padding(.horizontal, 14)
-        .frame(height: 46)
+        .buttonStyle(.plain)
+        .foregroundColor(hovering ? .primary : .secondary)
+        .onHover { hovering = $0 }
+        .help(help)
+        .accessibilityLabel(Text(help))
     }
 }
 
 struct ProviderDetailSectionTitle: View {
     let title: String
-    let symbol: String
+    var info: String? = nil
 
     var body: some View {
-        DSSectionLabel(title: title, symbol: symbol)
+        DSSectionHeader(title: title, info: info)
     }
 }
 
+/// One quota window: name and what is left, a slim bar, then the reset
+/// and pace in small print.
 struct ProviderDetailQuotaRow: View {
     let lane: DashboardQuotaLane
     let color: Color
-    /// Draw its own tile; off when the row already sits inside a card.
-    var framed = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(lane.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Text(String(format: "%.0f%%", lane.remainingPercent))
-                    .font(DS.numeral(13, weight: .bold))
-                    .foregroundColor(DS.tone(remaining: lane.remainingPercent))
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text(String(format: "%.0f", lane.remainingPercent))
+                        .font(.system(size: 20, weight: .light, design: .rounded).monospacedDigit())
+                        .foregroundColor(lane.remainingPercent < 15 ? Color(nsColor: .systemRed) : .primary)
+                    Text("%")
+                        .font(.system(size: 11, weight: .light, design: .rounded))
+                        .foregroundColor(.secondary)
+                }
                 Text(L("left"))
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
             }
-            UsageBar(fill: lane.remainingPercent, remaining: lane.remainingPercent, height: 6)
+            bar
             let details = [lane.resetsAt.flatMap { DS.countdown(to: $0) }.map { L("Resets in %@", $0) } ?? lane.resetText,
                            lane.paceDescription()].compactMap { $0 }
             if !details.isEmpty {
@@ -343,15 +358,24 @@ struct ProviderDetailQuotaRow: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding(framed ? 11 : 0)
-        .background(
-            RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous)
-                .fill(Color.primary.opacity(framed ? 0.045 : 0)))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(framed ? 0.08 : 0), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
         .accessibilityValue(Text(L("%.0f percent used", lane.usedPercent)))
+    }
+
+    /// In the provider's color; red only when almost nothing is left.
+    private var bar: some View {
+        let low = lane.remainingPercent < 15
+        return GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(0.08))
+                Capsule()
+                    .fill(low ? Color(nsColor: .systemRed) : color)
+                    .frame(width: max(4, geometry.size.width * CGFloat(max(0, min(100, lane.remainingPercent)) / 100)))
+                    .opacity(lane.remainingPercent <= 0 ? 0 : 1)
+            }
+        }
+        .frame(height: 4)
+        .accessibilityHidden(true)
     }
 }
 
@@ -408,12 +432,12 @@ struct DashboardTopModelsView: View {
 
     private func modelRow(_ title: String, model: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Label(title, systemImage: "cpu")
-                .font(.system(size: 11, weight: .medium))
+            Text(title)
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
             Spacer(minLength: 4)
             Text(model ?? L("No model data"))
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(model == nil ? .secondary : .primary)
                 .lineLimit(1)
                 .help(model ?? L("No dated model usage is available for this period."))
@@ -429,11 +453,11 @@ struct ProviderDetailMetricCell: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(metric.title)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             Text(metric.value)
-                .font(DS.numeral(19, weight: .bold))
+                .font(.system(size: 22, weight: .light, design: .rounded).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
             if let subtitle = metric.subtitle {
@@ -446,13 +470,6 @@ struct ProviderDetailMetricCell: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(11)
-        .background(
-            RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.045)))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         .accessibilityElement(children: .combine)
     }
 }

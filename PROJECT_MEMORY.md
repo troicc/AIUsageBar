@@ -2,6 +2,31 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-15 详细面板重新设计：去掉卡片，一张平面（已安装，已提交到 main 并推送）
+
+- 用户要求：详细面板“框架元素太多”，要更优雅简洁；同时同意去掉菜单里的额度环。仍遵守 10-16 的约定：**不靠删数据改观感**，只去掉外框和重复显示的数字。
+- **原则**：一张平面，不用卡片。分区只靠 `DSSectionHeader`（发丝线 + 13pt 标题 + 可选 ⓘ + 右侧控件），数字用细体 rounded 撑起层级，说明文字放到 ⓘ 里。组件自带标题，所以组件为空时不会留下多余的分隔线。新加的详情区块请沿用它，不要再包 `DSCard`。
+- **详细面板**（`ProviderDetailPopoverView`）：
+  - 头部去掉渐变底和分隔线：36pt 徽章，名称旁是品牌色小号大写套餐名和状态点，下一行是账号（只截断账号）· 更新时间。刷新/网页控制台/状态页/设置改为头部右侧的无边框图标按钮（悬停显示淡圆底），底部按钮栏删除，⌘R、⌘, 仍然有效。
+  - 额度：去掉三个大环，改为每个窗口一行（名称、20pt 细体剩余百分比、4pt 细条、重置·节奏小字）。细条用服务商品牌色，剩余 <15% 才变红。Claude 的共用额度说明放进标题的 ⓘ。
+  - 额度趋势（`ClaudeQuotaHistoryView`）不再包卡片，图表也没有内嵌底板。新增 `showsHeadline:`，详情和全部服务商传 false：上方额度行已经显示剩余，所以 `QuotaTrendHero(showsRemaining:)` 只保留重置、预测和节奏仪表。画廊和基准测试仍用默认值 true。
+  - 使用洞察：没有外卡片，2×2 要点不再有底色，`InsightPanel` 只剩间距；额度规模、使用时段、额度去向的小标题去掉了图标。
+  - 本地用量的四个数字、余额、用量价值、订阅日期、历史图都去掉了卡片和描边。用量价值的说明移到 ⓘ；月费输入框只在点“编辑”后（或已输入但不合法时）出现。
+  - 高度随内容：面板测量头部和内容高度，最高 560，超出才滚动；通过 `onHeight` 回调设置 `popover.contentSize`。显示前先 `layoutSubtreeIfNeeded()`，让弹窗按内容高度打开。DeepSeek 现在约 413pt 高。宽度仍为 390。
+- 这些组件在全部服务商窗口里也是平面的，那里只保留每个服务商外层的一张卡片，不再有卡片套卡片。
+- 菜单：额度环删除，`NativeMenuOverviewView` 改成只显示空状态的 `NativeMenuEmptyStateView`。服务商行右侧是百分比加 18pt 的 `AnimatedQuotaRing`，额度重置动画改在这里播放。“概览行数”设置现在限制菜单里列出的服务商行数，多出来的显示“另有 N 个，见“所有服务商详情””。
+- 画廊新增 `detail-full-<provider>-<mode>.png`（完整长度，用 `height: 3200`）；`detail-*` 现在是按内容适配后的真实高度。
+- 验证：中英文 × 浅/深色逐张看过完整面板、菜单、全部服务商；全部 contract、回归、provider auth、visual model attribution（5 项 PASS）、各脚本 typecheck、`git diff --check` 通过。运行时 smoke 输出 `PASS | snapshots=2 overviewItems=12`。已安装 build 202611151841，旧版备份 `/private/tmp/aiusagebar-install-backup.VimsGd/AIUsageBar.app`。
+
+## 2026-11-15 菜单直接列出服务商，点击即打开详细面板（已安装，已提交到 main 并推送）
+
+- 用户要求：菜单栏弹出菜单里服务商直接写开，详细面板作为二次点击的弹窗。
+- 合并菜单去掉了“服务商 ▸”子菜单（以及懒加载的每个服务商子菜单卡片）。电池式额度环保留在上方，下面按剩余额度升序列出全部服务商（不受 overviewProviderLimit 限制），每行是 `NativeMenuProviderRowView`：品牌徽章、名称 + 账号、额度窗口 · 重置倒计时（或余额/连接错误）、右侧百分比加细条。点击一行就关闭菜单并在状态栏图标下打开该服务商的 `ProviderDetailPopoverController`。原环形区下方“另有 N 个，见服务商”的提示随之删除。
+- 行是自定义视图菜单项，宿主 `MenuActionRowView`：自己用 `.selection` 材质（emphasized、左右内缩 5pt、圆角 4）画系统高亮，`MenuController.menu(_:willHighlight:)` 把鼠标/方向键高亮同步给它；`hitTest` 吃掉所有点击，`mouseUp` 里 `cancelTracking()` 后 `performActionForItem`，走和标准菜单项相同的 `openProviderDetailsMenuItem`。打开菜单期间随刷新 live 更新数值，但不重新排序。
+- 分开图标模式下单个服务商的菜单（卡片 + “打开详细面板…”）不变。
+- 运行时 smoke 改为检查：服务商行数等于账号数、每行 action 指向详情 popover、尺寸有效。画廊的 MenuMock 渲染这些行，第一行画成高亮态。
+- 验证：画廊中英文 × 浅/深人工看图；UI/release/smoke contract、Monterey patcher、全部回归、provider auth、`git diff --check` 通过；`AIUSAGEBAR_LOCAL_RUN_UI_SMOKE=1 build_local_validation.sh` 输出 `PASS | snapshots=2 overviewItems=13`。已安装 build 202611151805，旧版备份 `/private/tmp/aiusagebar-install-backup.ZtLSX2/AIUsageBar.app`。真实 NSMenu 无法截图，高亮与点击需在实机上确认。
+
 ## 2026-11-14 额度趋势图滑动/悬停卡顿：测量与修复（已安装，2026-11-15 已提交到 main 并推送）
 
 - 测量：`Scripts/quota_trend_bench.swift`（构建方式同 ui_gallery，读真实额度历史副本，约 5.5k 条/通道）。修复前洞察样式每周视图每帧滑动 198 ms、悬停 187 ms，5 小时 38/31 ms；修复后 5.5/1.3 ms（p95 10/2 ms）。
@@ -399,7 +424,7 @@ v0.7.0 原生 dashboard 重构从 `main@bed623c` 开始并已进入 `main`。本
 代码对应的主要交互如下：
 
 - 状态项直接绑定原生 `NSMenu`，左键/右键都采用系统菜单跟踪；不再把固定深色 popover 作为默认入口。
-- 合并模式显示系统外观的 Overview hosted row、可配置 3/6/9/12 个 Provider/账号摘要，以及包含全部账号的 Providers 子菜单。
+- 合并模式：标题行下面直接列出账号的可点击行（数量由“概览行数”3/6/9/12 决定，按剩余额度升序排列），点击即打开该账号的详情 popover。2026-11-15 起不再有 Providers 子菜单，也没有额度环。
 - 每个 Provider 子菜单显示服务状态、连接错误、最多四个菜单内指标、最多四条菜单内 quota、已用/剩余百分比、重置时间和 pace；完整指标与 quota 不再在 parser 层截断。
 - 原 328×520 多 Provider dashboard 与 All Providers 窗口继续作为可选入口；“Open Detailed Dashboard” 已改为直接锚定状态栏图标、跟随系统外观的单 Provider `NSPopover`，不再新建浮动窗口。
 - 状态项可选 usage meter、已用百分比、剩余百分比或 provider 图标；支持合并/每账号分离。

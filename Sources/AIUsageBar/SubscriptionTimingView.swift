@@ -42,23 +42,26 @@ struct SubscriptionTimingCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 3 : 8) {
-            HStack(alignment: .firstTextBaseline) {
+            if compact {
                 Label(L(timing?.kind.title ?? "Subscription date"), systemImage: "calendar")
-                    .font(.system(size: compact ? 10 : 11, weight: .medium))
-                Spacer(minLength: 4)
-                if !compact && (timing.map { $0.isManual || $0.isEstimated } ?? true) {
-                    Button(timing == nil ? L("Set date") : L("Edit")) {
-                        draftDate = timing?.date ?? Date()
-                        draftKind = timing?.kind ?? .expires
-                        editing = true
-                    }.buttonStyle(BorderlessButtonStyle()).font(.system(size: 10))
+                    .font(.system(size: 10, weight: .medium))
+            } else {
+                DSSectionHeader(title: L(timing?.kind.title ?? "Subscription date")) {
+                    if timing.map({ $0.isManual || $0.isEstimated }) ?? true {
+                        Button(timing == nil ? L("Set date") : L("Edit")) {
+                            draftDate = timing?.date ?? Date()
+                            draftKind = timing?.kind ?? .expires
+                            editing = true
+                        }.buttonStyle(BorderlessButtonStyle()).font(.system(size: 11))
+                    }
                 }
+                .padding(.bottom, 4)
             }
             if timing != nil {
                 TimelineView(.periodic(from: Date(), by: 60)) { context in
                     if let current = timing(now: context.date) {
                         VStack(alignment: .leading, spacing: compact ? 3 : 8) {
-                            Text(current.dateText).font(.system(size: compact ? 10 : 12, weight: .medium))
+                            Text(current.dateText).font(.system(size: compact ? 10 : 13, weight: compact ? .medium : .regular))
                             Text(L(current.status(now: context.date)) + " · " + origin(of: current))
                                 .font(.system(size: 10)).foregroundColor(.secondary)
                         }
@@ -73,12 +76,7 @@ struct SubscriptionTimingCard: View {
                 editor
             }
         }
-        .padding(compact ? 0 : 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-            .fill(Color.primary.opacity(compact ? 0 : 0.045)))
-        .overlay(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-            .strokeBorder(Color.primary.opacity(compact ? 0 : 0.08), lineWidth: 0.5))
     }
 
     private var editor: some View {

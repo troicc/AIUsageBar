@@ -533,15 +533,15 @@ struct InfoGlyph: View {
     }
 }
 
-/// A quiet inset surface that groups one chart or figure inside a card.
+/// Groups one chart or figure within a section; spacing sets it apart,
+/// not a surface.
 struct InsightPanel<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
         content
-            .padding(12)
+            .padding(.top, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
     }
 }
 
@@ -567,25 +567,31 @@ struct QuotaTrendHero: View {
     let pace: QuotaPace?
     let isWeekly: Bool
     let now: Date
+    /// Off when the remaining share is already shown just above.
+    var showsRemaining = true
 
     private var remaining: Double { max(0, 100 - last.usedPercent) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .bottom, spacing: 0) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 2) {
-                        Text(InsightFormat.percent(remaining))
-                            .font(.system(size: 38, weight: .light, design: .rounded).monospacedDigit())
-                            .foregroundColor(remaining < 15 ? QuotaInsightStyle.usedUp : .primary)
-                        Text("%").font(.system(size: 16, weight: .light, design: .rounded)).foregroundColor(.secondary)
-                    }
-                    Text(L("%@ · remaining", title)).font(.system(size: 10)).foregroundColor(.secondary)
-                }
-                Spacer(minLength: 12)
-                figures
-            }
+            if showsRemaining { headline } else { figures }
             if let pace = pace, pace.isMeasured, !pace.isExhausted { gauge(pace) }
+        }
+    }
+
+    private var headline: some View {
+        HStack(alignment: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(InsightFormat.percent(remaining))
+                        .font(.system(size: 38, weight: .light, design: .rounded).monospacedDigit())
+                        .foregroundColor(remaining < 15 ? QuotaInsightStyle.usedUp : .primary)
+                    Text("%").font(.system(size: 16, weight: .light, design: .rounded)).foregroundColor(.secondary)
+                }
+                Text(L("%@ · remaining", title)).font(.system(size: 10)).foregroundColor(.secondary)
+            }
+            Spacer(minLength: 12)
+            figures
         }
     }
 
@@ -736,32 +742,27 @@ struct ClaudeUsageInsightsCard: View {
         if let insights = cache.insights(history: dashboard.claudeQuotaHistory, now: now),
            insights.habits.grid.contains(where: { $0.contains { $0 > 0 } })
         {
-            DSCard(padding: 16) {
-                VStack(alignment: .leading, spacing: 12) {
-                    header
-                    tileGrid(tiles(insights))
-                    InsightPanel { QuotaScaleSection(trend: insights.scale, costLine: costLine) }
-                    InsightPanel { QuotaHabitHeatmap(habits: insights.habits) }
-                }
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                tileGrid(tiles(insights))
+                InsightPanel { QuotaScaleSection(trend: insights.scale, costLine: costLine) }
+                InsightPanel { QuotaHabitHeatmap(habits: insights.habits) }
             }
         }
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Label(L("Usage insights"), systemImage: "sparkles")
-                .font(.system(size: 12, weight: .semibold))
-            InfoGlyph(text: L("From the quota readings recorded on this Mac while AIUsageBar runs."))
-            Spacer()
+        DSSectionHeader(title: L("Usage insights"),
+                        info: L("From the quota readings recorded on this Mac while AIUsageBar runs.")) {
             Text(L("Last 4 weeks")).font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 
     /// Two tiles a row, each row as tall as its taller tile.
     private func tileGrid(_ tiles: [Tile]) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 16) {
             ForEach(Array(stride(from: 0, to: tiles.count, by: 2)), id: \.self) { start in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: 16) {
                     tileView(tiles[start])
                     if start + 1 < tiles.count { tileView(tiles[start + 1]) } else { Color.clear.frame(maxWidth: .infinity) }
                 }
@@ -786,9 +787,7 @@ struct ClaudeUsageInsightsCard: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.035)))
     }
 
     private func tiles(_ insights: ClaudeQuotaInsights) -> [Tile] {
@@ -895,7 +894,7 @@ struct QuotaScaleSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
-                DSSectionLabel(title: L("Quota size"), symbol: "ruler")
+                DSSectionLabel(title: L("Quota size"))
                 if let shift = trend.shift { shiftChip(shift) }
             }
             if let current = trend.current, trend.points.count >= 2 {
@@ -1022,7 +1021,7 @@ struct QuotaHabitHeatmap: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            DSSectionLabel(title: L("When you use it"), symbol: "calendar", trailing: L("Average week"))
+            DSSectionLabel(title: L("When you use it"), trailing: L("Average week"))
             Canvas { context, size in draw(in: &context, size: size) }
                 .frame(height: 7 * (Self.rowHeight + Self.gap) + 12)
                 .accessibilityElement()

@@ -44,7 +44,7 @@ extension L10nTable {
         "Choose Set Up Providers… below to connect Claude, Codex, DeepSeek or another service.":
             "选择下方的“设置服务商…”以连接 Claude、Codex、DeepSeek 或其他服务。",
         "Connection error": "连接错误",
-        "%d more in Providers": "另有 %d 个，见“服务商”",
+        "%d more in All Provider Details": "另有 %d 个，见“所有服务商详情”",
         "Plan · %@": "套餐 · %@",
         "Quota · all devices including web chat": "额度 · 所有设备（含网页聊天）",
         "Shared quota unavailable": "共享额度不可用",

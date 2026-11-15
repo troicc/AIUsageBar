@@ -115,6 +115,37 @@ struct DSCard<Content: View>: View {
     }
 }
 
+/// Heading of a section in the detail views: a hairline across, then the
+/// title, an optional ⓘ and trailing controls. Sections are set apart by
+/// this alone, without cards around them.
+struct DSSectionHeader<Trailing: View>: View {
+    let title: String
+    var info: String? = nil
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 0.5)
+            HStack(alignment: .center, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .accessibilityAddTraits(.isHeader)
+                if let info = info { InfoGlyph(text: info) }
+                Spacer(minLength: 6)
+                trailing
+            }
+        }
+        .padding(.top, 8)
+    }
+}
+
+extension DSSectionHeader where Trailing == EmptyView {
+    init(title: String, info: String? = nil) {
+        self.init(title: title, info: info) { EmptyView() }
+    }
+}
+
 /// Small uppercase-style section label used above groups of content.
 struct DSSectionLabel: View {
     let title: String

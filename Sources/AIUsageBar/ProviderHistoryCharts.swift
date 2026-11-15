@@ -83,11 +83,11 @@ struct ProviderHistorySeriesView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(series.title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 12, weight: .medium))
                 Spacer()
                 VStack(alignment: .trailing, spacing: 0) {
                     Text(series.latestText)
-                        .font(DS.numeral(15, weight: .bold))
+                        .font(.system(size: 16, weight: .regular, design: .rounded).monospacedDigit())
                         .foregroundColor(series.color)
                     Text(L("Latest"))
                         .font(.system(size: 9))
@@ -133,13 +133,6 @@ struct ProviderHistorySeriesView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.045)))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(series.title))
         .accessibilityValue(Text(series.accessibilitySummary))

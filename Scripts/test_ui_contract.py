@@ -39,7 +39,9 @@ assert "item.menu = menu" in menu
 assert "menuWillOpen" in menu
 assert "populateOverviewMenu" in menu
 assert "populateProviderMenu" in menu
-assert "NativeMenuOverviewView" in native_menu
+assert "NativeMenuProviderRowView" in native_menu
+assert "MenuActionRowView" in native_menu
+assert "openProviderDetailsMenuItem" in menu
 assert "NativeMenuProviderCardView" in native_menu
 assert "Open Dashboard Popover" not in menu
 assert "openDashboardPopoverMenuItem" not in menu

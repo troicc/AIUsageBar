@@ -446,7 +446,14 @@ final class MenuActionRowView: NSView {
         guard let item = enclosingMenuItem, let menu = item.menu else { return }
         let index = menu.index(of: item)
         menu.cancelTracking()
-        if index >= 0 { menu.performActionForItem(at: index) }
+        guard index >= 0 else { return }
+        // Native items fire their action only after the menu has closed. Running it here,
+        // while the menu is still tracking, let a popover opened by the action be dismissed
+        // by the menu's own teardown, so a tap sometimes did nothing. The default run-loop
+        // mode resumes only once tracking has ended.
+        RunLoop.main.perform(inModes: [.default]) {
+            menu.performActionForItem(at: index)
+        }
     }
 
     private static func roundedMask(radius: CGFloat) -> NSImage {

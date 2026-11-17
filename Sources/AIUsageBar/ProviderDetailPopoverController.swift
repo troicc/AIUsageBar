@@ -27,8 +27,10 @@ final class ProviderDetailPopoverController: NSObject, NSPopoverDelegate {
         // Lay out once before showing, so the popover opens at the content's height.
         popover.contentSize = NSSize(width: 390, height: 560)
         controller.view.layoutSubtreeIfNeeded()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // Activate first and make the popover key, so its first click is not spent on activation.
         NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        controller.view.window?.makeKey()
     }
 
     /// Short panels get a short popover; long ones stop at 560 and scroll.

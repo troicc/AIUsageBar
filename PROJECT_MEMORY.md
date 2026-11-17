@@ -2,6 +2,22 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-17 菜单里点服务商行有时打不开详情（已修并安装 build 202611171109，未经点击实测）
+
+- 现象：点一下服务商行有时没反应，双击才弹出，之后还要再点一下才响应。11-16 起服务商行改为自定义 `MenuActionRowView`（58f86da）后出现。
+- 原因：原生菜单项在菜单关闭后才发 action；自定义行在 `mouseUp` 里 `cancelTracking()` 后立刻 `performActionForItem`，菜单还在 tracking，详情 popover（transient）有时被菜单收尾当成外部点击关掉。“再点一下才响应”是因为先 show 后 activate，第一次点击花在激活上。
+- 修复：`MenuActionRowView.mouseUp` 改为 `RunLoop.main.perform(inModes: [.default])` 里执行 action（tracking 结束后才跑）；`ProviderDetailPopoverController` 和 `DetailsWindowController` 先 `NSApp.activate` 再 show，并让 popover 窗口 `makeKey()`。
+- Surge：用户说开着增强模式，但 11-17 本机检查没有 198.18.x.x 虚拟网卡，默认路由和到 160.79.104.10 的路由都走 en0，增强模式实际没生效。
+
+## 2026-11-17 Claude 用量闲置后取不到：根因是 App 不带代理变量（已修 App 并安装；引擎补丁待 CI 构建）
+
+- 现象：11-16 21:19 后 Claude 额度不再记录，日志连续 `subscription notice without session quota data`；从终端跑引擎却总成功。
+- 根因 1（主因）：App 由 launchd 启动，环境里没有 `HTTPS_PROXY`（用户的代理变量只在 `~/.zshrc`，Surge 只设系统代理）。Claude Code 不读系统代理，`claude /usage` 直连 `api.anthropic.com` 被按地区拒绝（403 `Request not allowed`）。CLI 只在 `~/.claude.json` 的 `cachedUsageUtilization` 还新鲜时（用户最近用过 Claude Code，那些会话走了代理）能显示额度，否则只打出 “You are currently using your subscription…” 这一行。所以“用着时正常、闲置后（夜里、早上开工前）断档”，与以往“只有夜间断档”一致。Surge 开机自启无关：它不会往别的进程注入环境变量，只有增强模式（虚拟网卡）才能接管命令行工具。
+- 修复：`SystemProxyEnvironment.swift`，`CLIClient.loginEnvironment()` 每次启动引擎前，若环境没有任何代理变量，就把当前系统 HTTP/HTTPS 代理写成 `HTTPS_PROXY`/`HTTP_PROXY`（含小写）和 `NO_PROXY`（localhost + 系统例外列表）；已有代理变量时不动；SOCKS 不写成 ALL_PROXY。每次启动都重新读，代理软件晚于 App 启动也能生效。回归 `Scripts/system_proxy_environment_regression.swift`（已接入 test_cost_history_parser.sh）。
+- 根因 2：Claude Code 2.1.282+ 的工作区信任对话框（Quick safety check）默认选中 **No, exit**，v0.46.0 引擎看到就回车 → claude 退出，PTY 会话路径每次都失败，只能退回一次性 `claude /usage`（6–8 秒、不重试）。上游 CodexBar 已修（`workspaceTrustKeys`，依赖完整屏幕渲染器）。本地改为 `Patches/EngineClaudeWorkspaceTrust.patch`（已登记到 `patch_upstream.py`）：新启动时先读首屏，标记在 No 上就按 ↓ 再回车，看不到标记就等待，非专用探测目录则按 Esc；删掉了旧的见到对话框就回车的规则。补丁已用 `git apply --check` 对 v0.46.0 原始文件验证，按键逻辑用抓到的真实首屏做过离线测试；**引擎需要 Swift 6.2，本机 5.6 编不了，尚未经 CI 构建**。
+- 临时处置：已用同样的 ↓+回车 在 `~/Library/Application Support/CodexBar/ClaudeProbe` 接受过一次信任，`~/.claude.json` 已记录 `hasTrustDialogAccepted: true`，现装引擎不再遇到对话框。
+- 验证：全套回归通过；`build_local_validation.sh` 通过，已安装 build 202611171100（helper 仍复制自旧安装），旧版备份 `/private/tmp/aiusagebar-install-backup.8oDZ7D/AIUsageBar.app`。用干净环境（无代理变量）`open` 启动后，引擎进程带上了系统代理（`NO_PROXY` 含系统例外 151.241.88.168），首次刷新即记录到 Claude 额度。
+
 ## 2026-11-15 详细面板重新设计：去掉卡片，一张平面（已安装，已提交到 main 并推送）
 
 - 用户要求：详细面板“框架元素太多”，要更优雅简洁；同时同意去掉菜单里的额度环。仍遵守 10-16 的约定：**不靠删数据改观感**，只去掉外框和重复显示的数字。

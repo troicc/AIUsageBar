@@ -458,6 +458,7 @@ actor CLIClient {
         environment["PATH"] = (commonPaths + [currentPath]).joined(separator: ":")
         environment["TERM"] = "dumb"
         environment["NO_COLOR"] = "1"
+        SystemProxyEnvironment.apply(to: &environment)
         return environment
     }
 }

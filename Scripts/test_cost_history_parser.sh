@@ -112,3 +112,10 @@ swiftc -module-cache-path "$MODULE_CACHE" \
   "$TMP/main.swift" \
   -o "$TMP/refresh-diagnostics-regression"
 "$TMP/refresh-diagnostics-regression"
+
+cp "$ROOT/Scripts/system_proxy_environment_regression.swift" "$TMP/main.swift"
+swiftc -module-cache-path "$MODULE_CACHE" \
+  "$ROOT/Sources/AIUsageBar/SystemProxyEnvironment.swift" \
+  "$TMP/main.swift" \
+  -o "$TMP/system-proxy-environment-regression"
+"$TMP/system-proxy-environment-regression"

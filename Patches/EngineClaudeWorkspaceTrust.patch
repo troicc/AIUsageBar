@@ -1,0 +1,155 @@
+diff --git a/Sources/CodexBarCore/Providers/Claude/ClaudeCLISession.swift b/Sources/CodexBarCore/Providers/Claude/ClaudeCLISession.swift
+index 2b0bc9a..ffb8ae0 100644
+--- a/Sources/CodexBarCore/Providers/Claude/ClaudeCLISession.swift
++++ b/Sources/CodexBarCore/Providers/Claude/ClaudeCLISession.swift
+@@ -57,12 +57,12 @@ actor ClaudeCLISession {
+     private var processGroup: pid_t?
+     private var binaryPath: String?
+     private var startedAt: Date?
++    private var startupScreenPending = false
++    private var launchedInProbeDirectory = false
+ 
++    // Workspace-trust dialogs are answered by `handleStartupScreen()` before any command is typed. Claude Code
++    // 2.1.282+ preselects "No, exit" there, so a blind Enter (the old behavior) quits the CLI on every launch.
+     private let promptSends: [String: String] = [
+-        "Do you trust the files in this folder?": "y\r",
+-        "Quick safety check:": "\r",
+-        "Yes, I trust this folder": "\r",
+-        "Ready to code here?": "\r",
+         "Press Enter to continue": "\r",
+     ]
+ 
+@@ -128,6 +128,10 @@ actor ClaudeCLISession {
+         sendEnterEvery: TimeInterval? = nil) async throws -> String
+     {
+         try self.ensureStarted(binary: binary)
++        if self.startupScreenPending {
++            self.startupScreenPending = false
++            try await self.handleStartupScreen()
++        }
+         if let startedAt {
+             let sinceStart = Date().timeIntervalSince(startedAt)
+             // Claude's TUI can drop early keystrokes while it's still initializing. Wait a bit longer than the
+@@ -278,6 +282,105 @@ actor ClaudeCLISession {
+         self.cleanup()
+     }
+ 
++    /// Reads the first screen of a fresh launch and answers the workspace-trust dialog when it is shown.
++    /// Returns once the screen has been idle without a trust dialog, or after a short deadline.
++    private func handleStartupScreen() async throws {
++        let cursorQuery = Data([0x1B, 0x5B, 0x36, 0x6E])
++        let startedAt = Date()
++        let deadline = startedAt.addingTimeInterval(8)
++        var text = ""
++        var sawOutput = false
++        var lastOutputAt = Date()
++        var lastCheckAt = Date.distantPast
++        var keysLeft = 3
++        while Date() < deadline {
++            try await Task.sleep(nanoseconds: 50_000_000)
++            let data = self.readChunk()
++            if !data.isEmpty {
++                if data.range(of: cursorQuery) != nil {
++                    try? self.send("\u{1b}[1;1R")
++                }
++                text += String(decoding: data, as: UTF8.self)
++                if text.count > 16384 { text = String(text.suffix(16384)) }
++                sawOutput = true
++                lastOutputAt = Date()
++            }
++            if let proc = self.process, !proc.isRunning {
++                throw SessionError.processExited
++            }
++            let idle = Date().timeIntervalSince(lastOutputAt) >= 0.4
++            if sawOutput, idle || Date().timeIntervalSince(lastCheckAt) >= 1.0 {
++                lastCheckAt = Date()
++                let screen = Self.normalizedNeedle(TextParsing.stripANSICodes(text))
++                guard let keys = Self.workspaceTrustKeys(
++                    normalizedScreen: screen,
++                    acceptsTrust: self.launchedInProbeDirectory)
++                else {
++                    // A dialog without a visible marker may still be drawing: wait instead of letting a later Enter
++                    // confirm "No, exit". Without a dialog, an idle screen (or a TUI that keeps redrawing for a few
++                    // seconds) is ready for the command.
++                    if Self.showsWorkspaceTrustDialog(normalizedScreen: screen) { continue }
++                    if idle || Date().timeIntervalSince(startedAt) >= 3 { return }
++                    continue
++                }
++                guard keysLeft > 0 else { return }
++                keysLeft -= 1
++                Self.log.info("Claude CLI workspace trust dialog answered", metadata: [
++                    "accepted": "\(self.launchedInProbeDirectory)",
++                ])
++                try self.send(keys)
++                if keys == "\u{1b}[B" || keys == "\u{1b}[A" {
++                    // The redraw after an arrow only moves the marker with cursor jumps, which a plain text scan
++                    // cannot place. The dialog has two options, so one arrow always lands on the trust option.
++                    try await Task.sleep(nanoseconds: 400_000_000)
++                    try self.send("\r")
++                }
++                // Judge only what is drawn after the answer.
++                text = ""
++                sawOutput = false
++                lastOutputAt = Date()
++            }
++        }
++    }
++
++    static func showsWorkspaceTrustDialog(normalizedScreen screen: String) -> Bool {
++        screen.contains("yes,itrustthisfolder") || screen.contains("quicksafetycheck:")
++            || screen.contains("doyoutrustthefilesinthisfolder?")
++    }
++
++    /// Keys that answer the workspace-trust dialog in `normalizedScreen` (lowercased, whitespace removed), or nil
++    /// when no trust dialog is shown or its selection marker is not visible. Enter is only sent once the marker is
++    /// on "Yes, I trust this folder"; otherwise an arrow moves it there. Outside the dedicated probe folder the
++    /// dialog is cancelled instead.
++    static func workspaceTrustKeys(normalizedScreen screen: String, acceptsTrust: Bool) -> String? {
++        let yes = "yes,itrustthisfolder"
++        let no = "no,exit"
++        let marker = "❯"
++        if let yesRange = screen.range(of: yes, options: .backwards) {
++            guard acceptsTrust else { return "\u{1b}" }
++            if screen.contains(marker + yes) { return "\r" }
++            guard let noRange = screen.range(of: marker + no, options: .backwards) else { return nil }
++            return noRange.lowerBound < yesRange.lowerBound ? "\u{1b}[B" : "\u{1b}[A"
++        }
++        if screen.contains("quicksafetycheck:") {
++            return acceptsTrust ? nil : "\u{1b}"
++        }
++        if screen.contains("doyoutrustthefilesinthisfolder?") {
++            return acceptsTrust ? "y\r" : "\u{1b}"
++        }
++        if screen.contains("readytocodehere?") {
++            return acceptsTrust ? "\r" : "\u{1b}"
++        }
++        return nil
++    }
++
++    /// Trust is only ever accepted for the dedicated probe folder, never for a fallback or redirected path.
++    static func isDedicatedProbeDirectory(_ url: URL) -> Bool {
++        let path = url.standardizedFileURL.path
++        guard path.hasSuffix("/CodexBar/ClaudeProbe") else { return false }
++        return url.resolvingSymlinksInPath().standardizedFileURL.path == path
++    }
++
+     private func ensureStarted(binary: String) throws {
+         if let proc = self.process, proc.isRunning, self.binaryPath == binary {
+             Self.log.debug("Claude CLI session reused")
+@@ -369,6 +472,8 @@ actor ClaudeCLISession {
+         self.processGroup = processGroup
+         self.binaryPath = binary
+         self.startedAt = Date()
++        self.startupScreenPending = true
++        self.launchedInProbeDirectory = Self.isDedicatedProbeDirectory(workingDirectory)
+     }
+ 
+     static func launchArguments(sessionID: UUID) -> [String] {
+@@ -487,6 +592,7 @@ actor ClaudeCLISession {
+         self.primaryFD = -1
+         self.processGroup = nil
+         self.startedAt = nil
++        self.startupScreenPending = false
+     }
+ 
+     private func readChunk() -> Data {

@@ -16,6 +16,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     private var providerItems: [String: NSStatusItem] = [:]
     private var menuContexts: [ObjectIdentifier: String] = [:]
     private var refreshTimer: Timer?
+    private let launchedAt = Date()
     private var lastMenuOpenedAt: Date?
     /// Start of the most recent refresh. The next automatic refresh is always
     /// scheduled relative to it, so opening menus can never postpone it.
@@ -69,6 +70,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
         store.onQuit = { NSApp.terminate(nil) }
         store.onRefreshStateChanged = { [weak self] in
+            self?.syncRefreshTimerWithStoreState()
             self?.rebuildStatusItems()
             self?.renderStatusItems()
         }
@@ -147,10 +149,21 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     private func refresh() async {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
         lastRefreshStartedAt = Date()
         await store.refresh()
         scheduleNextRefresh()
         offerProviderSetupIfNeeded()
+    }
+
+    private func syncRefreshTimerWithStoreState() {
+        if store.isRefreshing {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+        } else if store.lastRefreshStartedAt != nil || lastRefreshStartedAt != nil {
+            scheduleNextRefresh()
+        }
     }
 
     /// On the very first launch with nothing configured, open the Providers
@@ -173,6 +186,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         refreshTimer?.invalidate()
         refreshTimer = nil
 
+        let now = Date()
         let interval: TimeInterval
         switch Preferences.shared.refreshMode {
         case .manual:
@@ -180,24 +194,27 @@ final class MenuController: NSObject, NSMenuDelegate {
         case .fixed:
             interval = Preferences.shared.refreshInterval
         case .adaptive:
-            interval = adaptiveRefreshInterval()
+            interval = adaptiveRefreshInterval(now: now)
         }
 
-        let now = Date()
-        let due = (lastRefreshStartedAt ?? now).addingTimeInterval(interval)
-        let delay = max(1, due.timeIntervalSince(now))
+        let anchor = store.lastRefreshStartedAt ?? lastRefreshStartedAt
+        guard let delay = RefreshSchedulePolicy.timerDelay(
+            interval: interval,
+            isRefreshing: store.isRefreshing,
+            lastRefreshStartedAt: anchor,
+            now: now)
+        else { return }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
     }
 
     private func adaptiveRefreshInterval(now: Date = Date()) -> TimeInterval {
-        if ProcessInfo.processInfo.isLowPowerModeEnabled { return 1800 }
-        guard let lastMenuOpenedAt = lastMenuOpenedAt else { return 300 }
-        let idle = now.timeIntervalSince(lastMenuOpenedAt)
-        if idle < 10 * 60 { return 120 }
-        if idle < 60 * 60 { return 300 }
-        return 900
+        RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: lastMenuOpenedAt,
+            launchedAt: launchedAt,
+            now: now,
+            isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled)
     }
 
     private func rebuildStatusItems() {
@@ -350,9 +367,9 @@ final class MenuController: NSObject, NSMenuDelegate {
         let providerID = context == Self.mergedMenuContext ? nil : context
         lastMenuProviderID = providerID
         lastStatusButton = statusItem(for: menu)?.button
-        lastMenuOpenedAt = Date()
+        let now = Date()
+        lastMenuOpenedAt = now
         populate(menu: menu, providerID: providerID)
-        scheduleNextRefresh()
 
         if let providerID = providerID {
             store.selectProviderID(providerID)
@@ -362,11 +379,17 @@ final class MenuController: NSObject, NSMenuDelegate {
             }
         }
 
-        if Preferences.shared.refreshOnMenuOpen,
-           !store.isRefreshing,
-           store.lastSuccessfulRefresh.map({ Date().timeIntervalSince($0) > 60 }) ?? true
+        if RefreshSchedulePolicy.shouldRefreshOnMenuOpen(
+            refreshOnMenuOpen: Preferences.shared.refreshOnMenuOpen,
+            isRefreshing: store.isRefreshing,
+            lastSuccessfulRefresh: store.lastSuccessfulRefresh,
+            now: now)
         {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
             Task { await refresh() }
+        } else {
+            scheduleNextRefresh()
         }
     }
 

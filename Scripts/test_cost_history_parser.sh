@@ -120,6 +120,15 @@ swiftc -module-cache-path "$MODULE_CACHE" \
   -o "$TMP/system-proxy-environment-regression"
 "$TMP/system-proxy-environment-regression"
 
+cp "$ROOT/Scripts/refresh_schedule_regression.swift" "$TMP/main.swift"
+swiftc -module-cache-path "$MODULE_CACHE" \
+  "$ROOT"/Sources/AIUsageBar/L10n*.swift \
+  "$ROOT/Sources/AIUsageBar/LaunchAtLoginController.swift" \
+  "$ROOT/Sources/AIUsageBar/Preferences.swift" \
+  "$TMP/main.swift" \
+  -o "$TMP/refresh-schedule-regression"
+"$TMP/refresh-schedule-regression"
+
 cp "$ROOT/Scripts/antigravity_local_usage_regression.swift" "$TMP/main.swift"
 swiftc -module-cache-path "$MODULE_CACHE" \
   "$ROOT/Sources/AIUsageBar/Models.swift" \

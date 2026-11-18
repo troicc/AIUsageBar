@@ -453,7 +453,7 @@ struct GeneralSettingsView: View {
             SettingsSection(
                 title: L("Refresh"),
                 footer: store.refreshMode == .adaptive
-                    ? L("Adaptive refresh uses 2 minutes after menu activity, 5 minutes while warm, 15 minutes while idle, and 30 minutes in Low Power Mode.")
+                    ? L("Adaptive refresh uses 5 minutes after menu activity, 15 minutes while warm, and 30 minutes while idle or in Low Power Mode.")
                     : nil)
             {
                 SettingsRow(title: L("Mode"), symbol: "arrow.triangle.2.circlepath", symbolColor: Color(nsColor: .systemGreen)) {

@@ -2,6 +2,17 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-18 调缓 Adaptive 刷新档位并修复打开菜单时的双连刷竞态（已安装 build 202611181714，已提交到 main 并推送）
+
+- 原因：用户反馈 Claude `/usage` 探测每 2 分钟执行一次（中间偶有 25 秒双连刷）。排查发现：
+  1. 本机未写入 `refreshMode`，默认走 `Adaptive`，旧档位在打开菜单后 10 分钟内按 **2 分钟** 轮询、活跃期按 **5 分钟** 轮询，且冷启动未打开过菜单时 `lastMenuOpenedAt == nil` 会一直停留在活跃档（不进入空闲档）；
+  2. `MenuController.menuWillOpen` 先调用 `scheduleNextRefresh()` 挂起 1 秒定时器，随后又因 `refreshOnMenuOpen` 启动 `Task { await refresh() }`，而 `refresh()` 开头未失效旧定时器，导致 1 秒后定时器重入置位 `DashboardStore.refreshPending = true`，背靠背连跑两轮刷新；详情/全部服务商弹窗里直接点刷新按钮也不会同步重排 `MenuController` 定时器；
+  3. 引擎以 CLI 模式运行时 `ClaudeSourcePlanner` 在无浏览器 Cookie 时回退到交互式 PTY `claude` 输入 `/usage`，每轮刷新向 `~/.claude/history.jsonl` 写入一条 `ClaudeProbe` 的 `/usage` 记录（按用户决定，本次暂不处理历史记录清理）。
+- 修改（`Preferences.swift`、`MenuController.swift`、`DashboardStore.swift`、`SettingsPanes.swift`、`L10n+Settings.swift`）：
+  - 新增 `RefreshSchedulePolicy`：将 `Adaptive` 档位由 `2m / 5m / 15m`（低电量 `30m`）调缓为 **菜单操作后 10 分钟内每 5 分钟、活跃期（60 分钟内或刚启动）每 15 分钟、空闲（≥60 分钟，含冷启动未点菜单满 1 小时）或低电量模式下每 30 分钟**（保持在 `ClaudeQuotaSeries.observedGap = 3600s` 以内，不断开趋势图连续段）。
+  - 修复双连刷：`refresh()` 开头立即失效 `refreshTimer`；`menuWillOpen` 在立即触发刷新时不再挂起定时器；`DashboardStore` 记录 `lastRefreshStartedAt` 并通过 `onRefreshStateChanged` 同步失效进行中刷新的定时器、在刷新完成后统一按最新起点重排，覆盖详情弹窗内点刷新的路径。
+- 验证：新增 `Scripts/refresh_schedule_regression.swift`（接入 `test_cost_history_parser.sh` 和 `test_ui_contract.py`）与 `CoreBehaviorTests` 用例；UI/release/smoke/Monterey patcher/provider auth/catalog contract、全套回归、双架构 Swift 5.6 typecheck、`git diff --check` 全部通过。`build_local_validation.sh`（0.10.0 / build 202611181714、Universal 2、macOS 12、65-provider offline smoke）通过，已安装到 `/Applications/AIUsageBar.app` 并启动，旧版备份 `/private/tmp/aiusagebar-install-backup.o3GCHd/AIUsageBar.app`。
+
 ## 2026-11-18 Antigravity 使用额度趋势曲线与使用洞察（已安装 build 202611181605，已提交到 main 并推送）
 
 - 原因：此前额度趋势图（`ClaudeQuotaHistoryView` + `ClaudeUsageInsightsSection`）与持久化存储（`ClaudeQuotaHistoryStore`）仅对 `claude` 生效，Antigravity（`agy`）虽然已能读取 4 个额度窗口和本地对话 Token，但每次刷新没有保存额度百分比样本，详细面板与“所有服务商”中也未挂载额度趋势曲线。
@@ -482,7 +493,7 @@ v0.7.0 原生 dashboard 重构从 `main@bed623c` 开始并已进入 `main`。本
 - 原 328×520 多 Provider dashboard 与 All Providers 窗口继续作为可选入口；“Open Detailed Dashboard” 已改为直接锚定状态栏图标、跟随系统外观的单 Provider `NSPopover`，不再新建浮动窗口。
 - 状态项可选 usage meter、已用百分比、剩余百分比或 provider 图标；支持合并/每账号分离。
 - Settings 改为 General、Menu Bar、Notifications、Providers、Advanced 侧边栏；可控制刷新、菜单信息密度、账号名、状态、quota 表达和通知阈值。
-- 刷新支持 Manual、固定间隔与 Adaptive；Adaptive 在最近打开菜单后为 2 分钟、warm 为 5 分钟、idle 为 15 分钟、低电量为 30 分钟，并可打开菜单时刷新。
+- 刷新支持 Manual、固定间隔与 Adaptive；Adaptive 在最近打开菜单后（10 分钟内）为 5 分钟、warm（60 分钟内或刚启动）为 15 分钟、idle 或低电量模式为 30 分钟，并可打开菜单时刷新。
 - Provider status 已进入 dashboard/header/menu/status-item tooltip；incident、恢复和 quota 阈值可发送 opt-in 本地通知，首次刷新只建立 baseline。
 - DeepSeek/Venice tokenAccounts 可在设置中新增并事务验证、查看、切换和确认删除；设置还显示真实 snapshot 的账号、来源、套餐、quota 和连接/服务状态。
 - DashboardActionRow 继续绑定真实的 ⌘R、⌘,、⌘Q；单 Provider 详情 popover 观察共享 DashboardStore，刷新失败保留旧数据，刷新请求继续 coalesce。

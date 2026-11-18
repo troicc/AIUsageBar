@@ -524,6 +524,34 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertEqual(gemini5h.consumedPoints(in: DateInterval(start: base, end: base.addingTimeInterval(900))), 5.0, accuracy: 1e-6)
     }
 
+    func testAdaptiveRefreshScheduleTiersAndInFlightGuard() {
+        let launch = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: nil, launchedAt: launch, now: launch.addingTimeInterval(1800), isLowPowerModeEnabled: false), 900)
+        XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: nil, launchedAt: launch, now: launch.addingTimeInterval(3600), isLowPowerModeEnabled: false), 1800)
+        let menuOpen = launch.addingTimeInterval(4000)
+        XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: menuOpen, launchedAt: launch, now: menuOpen.addingTimeInterval(599), isLowPowerModeEnabled: false), 300)
+        XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: menuOpen, launchedAt: launch, now: menuOpen.addingTimeInterval(600), isLowPowerModeEnabled: false), 900)
+        XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: menuOpen, launchedAt: launch, now: menuOpen.addingTimeInterval(3600), isLowPowerModeEnabled: false), 1800)
+        XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(
+            lastMenuOpenedAt: menuOpen, launchedAt: launch, now: menuOpen.addingTimeInterval(60), isLowPowerModeEnabled: true), 1800)
+
+        XCTAssertNil(RefreshSchedulePolicy.timerDelay(
+            interval: 300, isRefreshing: true, lastRefreshStartedAt: menuOpen, now: menuOpen.addingTimeInterval(10)))
+        XCTAssertEqual(RefreshSchedulePolicy.timerDelay(
+            interval: 300, isRefreshing: false, lastRefreshStartedAt: menuOpen, now: menuOpen.addingTimeInterval(120)), 180)
+        XCTAssertFalse(RefreshSchedulePolicy.shouldRefreshOnMenuOpen(
+            refreshOnMenuOpen: true, isRefreshing: true, lastSuccessfulRefresh: nil, now: menuOpen))
+        XCTAssertFalse(RefreshSchedulePolicy.shouldRefreshOnMenuOpen(
+            refreshOnMenuOpen: true, isRefreshing: false, lastSuccessfulRefresh: menuOpen.addingTimeInterval(-30), now: menuOpen))
+        XCTAssertTrue(RefreshSchedulePolicy.shouldRefreshOnMenuOpen(
+            refreshOnMenuOpen: true, isRefreshing: false, lastSuccessfulRefresh: menuOpen.addingTimeInterval(-61), now: menuOpen))
+    }
+
     private func number(_ payload: [String: Any], _ key: String) -> Double {
         (payload[key] as? NSNumber)?.doubleValue ?? .nan
     }

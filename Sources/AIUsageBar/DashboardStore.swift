@@ -10,6 +10,7 @@ final class DashboardStore: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastError: String?
     @Published private(set) var lastSuccessfulRefresh: Date?
+    private(set) var lastRefreshStartedAt: Date?
     @Published private(set) var tokenHistoryRevision = 0
 
     private let client: CLIClient
@@ -99,6 +100,7 @@ final class DashboardStore: ObservableObject {
     }
 
     private func performRefresh() async {
+        lastRefreshStartedAt = Date()
         // Reads Claude Code logs on the actor's executor while the usage
         // engine runs; incremental scans take a few milliseconds.
         async let activity = claudeActivity.activeMinutes()

@@ -30,7 +30,7 @@ extension L10nTable {
         "15 minutes": "15 分钟",
         "30 minutes": "30 分钟",
         "Refresh when the status menu opens": "打开状态菜单时刷新",
-        "Adaptive refresh uses 2 minutes after menu activity, 5 minutes while warm, 15 minutes while idle, and 30 minutes in Low Power Mode.": "自适应刷新：菜单操作后每 2 分钟，活跃时每 5 分钟，空闲时每 15 分钟，低电量模式下每 30 分钟。",
+        "Adaptive refresh uses 5 minutes after menu activity, 15 minutes while warm, and 30 minutes while idle or in Low Power Mode.": "自适应刷新：菜单操作后每 5 分钟，活跃时每 15 分钟，空闲或低电量模式下每 30 分钟。",
         "Application": "应用",
         "Launch at login": "开机启动",
         "Automatically download updates": "自动下载更新",

@@ -16,6 +16,53 @@ enum RefreshMode: String, CaseIterable, Identifiable {
     }
 }
 
+enum RefreshSchedulePolicy {
+    static let recentMenuInterval: TimeInterval = 5 * 60
+    static let warmInterval: TimeInterval = 15 * 60
+    static let idleInterval: TimeInterval = 30 * 60
+    static let lowPowerInterval: TimeInterval = 30 * 60
+    static let menuOpenFreshnessWindow: TimeInterval = 60
+
+    static func adaptiveInterval(
+        lastMenuOpenedAt: Date?,
+        launchedAt: Date,
+        now: Date,
+        isLowPowerModeEnabled: Bool
+    ) -> TimeInterval {
+        if isLowPowerModeEnabled { return lowPowerInterval }
+        if let lastMenuOpenedAt = lastMenuOpenedAt {
+            let idle = max(0, now.timeIntervalSince(lastMenuOpenedAt))
+            if idle < 10 * 60 { return recentMenuInterval }
+            if idle < 60 * 60 { return warmInterval }
+            return idleInterval
+        }
+        let uptime = max(0, now.timeIntervalSince(launchedAt))
+        return uptime < 60 * 60 ? warmInterval : idleInterval
+    }
+
+    static func timerDelay(
+        interval: TimeInterval,
+        isRefreshing: Bool,
+        lastRefreshStartedAt: Date?,
+        now: Date
+    ) -> TimeInterval? {
+        guard !isRefreshing else { return nil }
+        let due = (lastRefreshStartedAt ?? now).addingTimeInterval(max(60, interval))
+        return max(1, due.timeIntervalSince(now))
+    }
+
+    static func shouldRefreshOnMenuOpen(
+        refreshOnMenuOpen: Bool,
+        isRefreshing: Bool,
+        lastSuccessfulRefresh: Date?,
+        now: Date
+    ) -> Bool {
+        guard refreshOnMenuOpen, !isRefreshing else { return false }
+        guard let lastSuccessfulRefresh = lastSuccessfulRefresh else { return true }
+        return now.timeIntervalSince(lastSuccessfulRefresh) > menuOpenFreshnessWindow
+    }
+}
+
 enum MenuBarDisplayStyle: String, CaseIterable, Identifiable {
     case meter
     case usedPercentage

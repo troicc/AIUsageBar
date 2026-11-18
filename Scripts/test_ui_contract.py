@@ -62,7 +62,9 @@ for token in [
 ]:
     assert token in preferences, token
 assert "adaptiveRefreshInterval" in menu
+assert "RefreshSchedulePolicy" in menu
 assert "ProcessInfo.processInfo.isLowPowerModeEnabled" in menu
+assert "refresh_schedule_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert "runtimeSmokeReport" in menu
 assert 'failures.append("provider detail popover did not open")' in menu
 assert "AIUSAGEBAR_UI_SMOKE_OUTPUT" in (SOURCES / "AppDelegate.swift").read_text()

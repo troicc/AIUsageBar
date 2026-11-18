@@ -94,6 +94,121 @@ struct ModelAttributionVisualQA {
                 isRefreshing: false, error: nil, refresh: {}, openSettings: {}),
                 size: NSSize(width: 620, height: 560), appearance: appearance,
                 output: output.appendingPathComponent("claude-shared-all-\(mode).png"))
+            let agyRaw = """
+            {"provider":"antigravity","source":"cli","usage":{
+              "updatedAt":"\(FlexibleDate.iso8601String(quotaNow))",
+              "extraRateWindows":[
+                {"id":"antigravity-quota-summary-g5","title":"Gemini 5-hour","window":{"usedPercent":14,"windowMinutes":300,"resetsAt":"\(FlexibleDate.iso8601String(quotaNow.addingTimeInterval(3 * 3600)))"}},
+                {"id":"antigravity-quota-summary-gw","title":"Gemini weekly","window":{"usedPercent":22,"windowMinutes":10080,"resetsAt":"\(FlexibleDate.iso8601String(quotaNow.addingTimeInterval(4 * 86_400)))"}},
+                {"id":"antigravity-quota-summary-c5","title":"Claude/GPT 5-hour","window":{"usedPercent":38,"windowMinutes":300,"resetsAt":"\(FlexibleDate.iso8601String(quotaNow.addingTimeInterval(2 * 3600)))"}},
+                {"id":"antigravity-quota-summary-cw","title":"Claude/GPT weekly","window":{"usedPercent":31,"windowMinutes":10080,"resetsAt":"\(FlexibleDate.iso8601String(quotaNow.addingTimeInterval(4 * 86_400)))"}}
+              ]
+            }}
+            """
+            let agySnap = try CLIClient.decodeSnapshots(agyRaw).first!
+            let agySupplement = """
+            {"provider":"antigravity","source":"local","updatedAt":"\(FlexibleDate.iso8601String(quotaNow))","sessionTokens":142000,"last30DaysTokens":980000,"daily":[
+              {"date":"\(today)","totalTokens":142000,"modelBreakdowns":[{"modelName":"gemini-4-carbon","totalTokens":142000}]}
+            ]}
+            """
+            var agyDashboard = DashboardParser.dashboard(snapshot: agySnap, supplementalJSON: agySupplement)
+            let agyGeminiSamples = (0..<12).map { index -> ClaudeQuotaSample in
+                ClaudeQuotaSample(timestamp: quotaNow.addingTimeInterval(Double(index - 11) * 1200),
+                                  usedPercent: Double(3 + index),
+                                  resetsAt: quotaNow.addingTimeInterval(3 * 3600))
+            }
+            let agyClaudeSamples = (0..<12).map { index -> ClaudeQuotaSample in
+                ClaudeQuotaSample(timestamp: quotaNow.addingTimeInterval(Double(index - 11) * 1200),
+                                  usedPercent: Double(5 + index * 3),
+                                  resetsAt: quotaNow.addingTimeInterval(2 * 3600))
+            }
+            agyDashboard.quotaTrendPools = [
+                QuotaTrendPool(id: "gemini", title: L("Gemini"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: agyGeminiSamples),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: agyGeminiSamples.enumerated().map { idx, s in
+                        ClaudeQuotaSample(timestamp: s.timestamp, usedPercent: Double(17 + idx / 2), resetsAt: quotaNow.addingTimeInterval(4 * 86_400))
+                    }),
+                ]),
+                QuotaTrendPool(id: "claude-gpt", title: L("Claude/GPT"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: agyClaudeSamples),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: agyClaudeSamples.enumerated().map { idx, s in
+                        ClaudeQuotaSample(timestamp: s.timestamp, usedPercent: Double(20 + idx), resetsAt: quotaNow.addingTimeInterval(4 * 86_400))
+                    }),
+                ]),
+            ]
+            try render(ProviderDetailPopoverView(dashboard: agyDashboard, isRefreshing: false,
+                refresh: {}, openDashboard: {}, openStatus: {}, openSettings: {}),
+                size: NSSize(width: 390, height: 560), appearance: appearance,
+                output: output.appendingPathComponent("antigravity-detail-\(mode).png"))
+            try render(AllProvidersContentView(entries: [AllProviderEntry(id: "antigravity", dashboard: agyDashboard)],
+                isRefreshing: false, error: nil, refresh: {}, openSettings: {}),
+                size: NSSize(width: 620, height: 560), appearance: appearance,
+                output: output.appendingPathComponent("antigravity-all-\(mode).png"))
+            var agySingleSample = agyDashboard
+            agySingleSample.quotaTrendPools = [
+                QuotaTrendPool(id: "gemini", title: L("Gemini"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: [agyGeminiSamples.last!]),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: [
+                        ClaudeQuotaSample(timestamp: quotaNow, usedPercent: 22, resetsAt: quotaNow.addingTimeInterval(4 * 86_400)),
+                    ]),
+                ]),
+                QuotaTrendPool(id: "claude-gpt", title: L("Claude/GPT"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: [agyClaudeSamples.last!]),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: [
+                        ClaudeQuotaSample(timestamp: quotaNow, usedPercent: 31, resetsAt: quotaNow.addingTimeInterval(4 * 86_400)),
+                    ]),
+                ]),
+            ]
+            let previousLang = L10n.language
+            L10n.language = .simplifiedChinese
+            var agyZh = DashboardParser.dashboard(snapshot: agySnap, supplementalJSON: agySupplement)
+            agyZh.quotaTrendPools = [
+                QuotaTrendPool(id: "gemini", title: L("Gemini"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: agyGeminiSamples),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: agyGeminiSamples.enumerated().map { idx, s in
+                        ClaudeQuotaSample(timestamp: s.timestamp, usedPercent: Double(17 + idx / 2), resetsAt: quotaNow.addingTimeInterval(4 * 86_400))
+                    }),
+                ]),
+                QuotaTrendPool(id: "claude-gpt", title: L("Claude/GPT"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: agyClaudeSamples),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: agyClaudeSamples.enumerated().map { idx, s in
+                        ClaudeQuotaSample(timestamp: s.timestamp, usedPercent: Double(20 + idx), resetsAt: quotaNow.addingTimeInterval(4 * 86_400))
+                    }),
+                ]),
+            ]
+            var agySingleZh = agyZh
+            agySingleZh.quotaTrendPools = [
+                QuotaTrendPool(id: "gemini", title: L("Gemini"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: [agyGeminiSamples.last!]),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: [
+                        ClaudeQuotaSample(timestamp: quotaNow, usedPercent: 22, resetsAt: quotaNow.addingTimeInterval(4 * 86_400)),
+                    ]),
+                ]),
+                QuotaTrendPool(id: "claude-gpt", title: L("Claude/GPT"), series: [
+                    ClaudeQuotaSeries(id: "five-hour", title: L("5 hours"), samples: [agyClaudeSamples.last!]),
+                    ClaudeQuotaSeries(id: "weekly", title: L("Weekly"), samples: [
+                        ClaudeQuotaSample(timestamp: quotaNow, usedPercent: 31, resetsAt: quotaNow.addingTimeInterval(4 * 86_400)),
+                    ]),
+                ]),
+            ]
+            try render(ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ClaudeQuotaHistoryView(dashboard: agyZh, now: quotaNow, pool: "claude-gpt", showsHeadline: false)
+                    ClaudeUsageInsightsCard(dashboard: agyZh, now: quotaNow, pool: "claude-gpt")
+                }.padding(16)
+            }, size: NSSize(width: 390, height: 640), appearance: appearance,
+                output: output.appendingPathComponent("antigravity-quota-24h-zh-\(mode).png"))
+            try render(ScrollView {
+                ClaudeQuotaHistoryView(dashboard: agySingleZh, now: quotaNow, pool: "gemini", showsHeadline: false)
+                    .padding(16)
+            }, size: NSSize(width: 390, height: 390), appearance: appearance,
+                output: output.appendingPathComponent("antigravity-quota-first-sample-zh-\(mode).png"))
+            try render(ScrollView {
+                ClaudeQuotaHistoryView(dashboard: agyZh, now: quotaNow, window: "weekly", pool: "gemini", showsHeadline: false)
+                    .padding(16)
+            }, size: NSSize(width: 390, height: 470), appearance: appearance,
+                output: output.appendingPathComponent("antigravity-quota-weekly-zh-\(mode).png"))
+            L10n.language = previousLang
             for state in ["samples", "empty", "error"] {
                 var historyDashboard = quotaDashboard
                 if state == "empty" { historyDashboard.claudeQuotaHistory = [] }

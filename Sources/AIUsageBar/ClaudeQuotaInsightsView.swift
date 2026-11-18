@@ -42,6 +42,7 @@ struct QuotaPaceOverlay: View, Equatable {
     let quiet: [DateInterval]
     let scale: QuotaTrendScale
     let now: Date
+    var brand: Color = QuotaInsightStyle.brand
 
     var body: some View {
         // The moon is a symbol, laid out once: drawn as text it would be typeset on every frame of a drag.
@@ -117,11 +118,11 @@ struct QuotaPaceOverlay: View, Equatable {
                 ?? point(pace.cycle.end, pace.projectedAtReset(now: now), size))
         }
         let end = path.currentPoint ?? start
-        context.stroke(path, with: .color(QuotaInsightStyle.brand.opacity(0.85)),
+        context.stroke(path, with: .color(brand.opacity(0.85)),
                        style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round, dash: [4, 3]))
         let dot = Path(ellipseIn: CGRect(x: end.x - 3, y: end.y - 3, width: 6, height: 6))
         context.fill(dot, with: .color(Color(nsColor: .windowBackgroundColor)))
-        context.stroke(dot, with: .color(QuotaInsightStyle.brand), lineWidth: 1.3)
+        context.stroke(dot, with: .color(brand), lineWidth: 1.3)
     }
 }
 
@@ -130,6 +131,7 @@ struct QuotaPaceOverlay: View, Equatable {
 struct QuotaWindowBars: View, Equatable {
     let windows: [ClaudeQuotaSeries.Cycle]
     let scale: QuotaTrendScale
+    var brand: Color = QuotaInsightStyle.brand
 
     private var used: [ClaudeQuotaSeries.Cycle] { windows.filter { $0.peakPercent > 0 } }
 
@@ -166,7 +168,7 @@ struct QuotaWindowBars: View, Equatable {
             let spent = !window.exhausted.isEmpty
             let opacity = spent ? 0.9 : 0.22 + 0.38 * min(1, window.peakPercent / 100)
             context.fill(Path(roundedRect: rect, cornerRadius: min(1.5, rect.width / 2)),
-                         with: .color(QuotaInsightStyle.brand.opacity(opacity)))
+                         with: .color(brand.opacity(opacity)))
         }
     }
 }
@@ -175,6 +177,7 @@ struct QuotaWindowBars: View, Equatable {
 struct QuotaPaceKey: View {
     /// Whether the forecast follows the usual rhythm, with its quiet hours shaded.
     var showsQuiet = false
+    var brand: Color = QuotaInsightStyle.brand
 
     /// The lines on one row; the shaded marks join them, or take a second
     /// row when the quiet hours are shown too.
@@ -208,9 +211,9 @@ struct QuotaPaceKey: View {
         swatch(L("Weekly usage")) { path in
             path.move(to: CGPoint(x: 0, y: 3)); path.addLine(to: CGPoint(x: 12, y: 3))
         }
-        .foregroundColor(QuotaInsightStyle.brand)
+        .foregroundColor(brand)
         dashed(L("Even pace"), color: QuotaInsightStyle.even)
-        dashed(L("Projected"), color: QuotaInsightStyle.brand)
+        dashed(L("Projected"), color: brand)
     }
 
     private var usedUp: some View {
@@ -258,6 +261,7 @@ enum QuotaDays {
 struct QuotaDayColumns: View, Equatable {
     let scale: QuotaTrendScale
     let selected: Date?
+    var brand: Color = QuotaInsightStyle.brand
 
     var body: some View {
         Canvas { context, size in
@@ -267,7 +271,7 @@ struct QuotaDayColumns: View, Equatable {
                 let left = scale.x(day.start, width: size.width), right = scale.x(day.end, width: size.width)
                 if right > left {
                     context.fill(Path(roundedRect: CGRect(x: left, y: 0, width: right - left, height: bottom), cornerRadius: 3),
-                                 with: .color(QuotaInsightStyle.brand.opacity(0.09)))
+                                 with: .color(brand.opacity(0.09)))
                 }
             }
             for day in days.dropFirst() {
@@ -288,6 +292,7 @@ struct QuotaDayAxis: View {
     let scale: QuotaTrendScale
     let now: Date
     @Binding var selected: Date?
+    var brand: Color = QuotaInsightStyle.brand
 
     private static let weekday: DateFormatter = formatter("EEE")
     private static let date: DateFormatter = formatter("d")
@@ -339,7 +344,7 @@ struct QuotaDayAxis: View {
         let isSelected = selected.map(day.contains) ?? false
         let isToday = day.contains(now)
         let isFuture = day.start > now
-        let tint: Color = isToday ? QuotaInsightStyle.brand : isFuture ? .secondary.opacity(0.6) : .secondary
+        let tint: Color = isToday ? brand : isFuture ? .secondary.opacity(0.6) : .secondary
         let text = Self.text(day.start)
         return VStack(spacing: 1) {
             if right - left >= 18 {
@@ -352,7 +357,7 @@ struct QuotaDayAxis: View {
         .lineLimit(1)
         .frame(width: max(1, right - left - 2), height: 26)
         .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
-            .fill(isSelected ? QuotaInsightStyle.brand.opacity(0.16) : Color.clear))
+            .fill(isSelected ? brand.opacity(0.16) : Color.clear))
         .overlay(alignment: .topLeading) {
             Rectangle().fill(Color.primary.opacity(0.18)).frame(width: 0.5, height: 4).offset(x: -1)
         }
@@ -376,6 +381,7 @@ struct QuotaDayDetail: View {
     let fiveHourCycles: [ClaudeQuotaSeries.Cycle]
     let pace: QuotaPace?
     let now: Date
+    var brand: Color = QuotaInsightStyle.brand
     let showDay: (() -> Void)?
     let close: () -> Void
 
@@ -478,7 +484,7 @@ struct QuotaDayDetail: View {
             }
             if let expected = expected, isToday || isFuture {
                 figure("≈ +" + InsightFormat.percent(expected) + "%",
-                       caption: isToday ? L("Expected later today") : L("Expected"), tint: QuotaInsightStyle.brand)
+                       caption: isToday ? L("Expected later today") : L("Expected"), tint: brand)
             }
             if !isFuture, !windows.isEmpty {
                 let usedUp = windows.filter { !$0.exhausted.isEmpty }.count
@@ -502,10 +508,10 @@ struct QuotaDayDetail: View {
     private func tag(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(QuotaInsightStyle.brand)
+            .foregroundColor(brand)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
-            .background(Capsule().fill(QuotaInsightStyle.brand.opacity(0.12)))
+            .background(Capsule().fill(brand.opacity(0.12)))
     }
 
     private func figure(_ value: String, caption: String, tint: Color = .primary) -> some View {
@@ -569,6 +575,7 @@ struct QuotaTrendHero: View {
     let now: Date
     /// Off when the remaining share is already shown just above.
     var showsRemaining = true
+    var brand: Color = QuotaInsightStyle.brand
 
     private var remaining: Double { max(0, 100 - last.usedPercent) }
 
@@ -637,7 +644,7 @@ struct QuotaTrendHero: View {
             ? L("Right on an even pace")
             : difference > 0 ? L("%@%% more than an even pace", InsightFormat.percent(difference))
                 : L("%@%% less than an even pace", InsightFormat.percent(-difference))
-        let tint = difference > 3 ? QuotaInsightStyle.fast : QuotaInsightStyle.brand
+        let tint = difference > 3 ? QuotaInsightStyle.fast : brand
         return HStack(spacing: 8) {
             GeometryReader { geometry in
                 let width = geometry.size.width
@@ -694,11 +701,12 @@ struct QuotaAllowanceFigures: View {
 struct ClaudeUsageInsightsSection: View {
     let dashboard: ProviderDashboard
     var now = Date()
+    var pool: String? = nil
     @AppStorage(QuotaChartMode.preferenceKey) private var mode = QuotaChartMode.insights.rawValue
 
     var body: some View {
         if QuotaChartMode(rawValue: mode) ?? .insights == .insights {
-            ClaudeUsageInsightsCard(dashboard: dashboard, now: now)
+            ClaudeUsageInsightsCard(dashboard: dashboard, now: now, pool: pool)
         }
     }
 }
@@ -727,7 +735,18 @@ final class QuotaInsightsCache {
 struct ClaudeUsageInsightsCard: View {
     let dashboard: ProviderDashboard
     let now: Date
+    var pool: String? = nil
     @State private var cache = QuotaInsightsCache()
+    @AppStorage("antigravityQuotaPool") private var storedPool = ""
+
+    private var brand: Color { ProviderBrand.color(for: dashboard.id) }
+    private var pools: [QuotaTrendPool] { dashboard.effectiveQuotaTrendPools }
+    private var activePool: QuotaTrendPool? {
+        ClaudeQuotaHistoryView.resolvePool(in: pools, stored: storedPool, forced: pool)
+    }
+    private var activeHistory: [ClaudeQuotaSeries] {
+        activePool?.series ?? []
+    }
 
     private struct Tile: Identifiable {
         let id: String
@@ -739,22 +758,23 @@ struct ClaudeUsageInsightsCard: View {
     }
 
     var body: some View {
-        if let insights = cache.insights(history: dashboard.claudeQuotaHistory, now: now),
+        if let insights = cache.insights(history: activeHistory, now: now),
            insights.habits.grid.contains(where: { $0.contains { $0 > 0 } })
         {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 tileGrid(tiles(insights))
-                InsightPanel { QuotaScaleSection(trend: insights.scale, costLine: costLine) }
-                InsightPanel { QuotaHabitHeatmap(habits: insights.habits) }
+                InsightPanel { QuotaScaleSection(trend: insights.scale, costLine: costLine, brand: brand) }
+                InsightPanel { QuotaHabitHeatmap(habits: insights.habits, brand: brand) }
             }
         }
     }
 
     private var header: some View {
-        DSSectionHeader(title: L("Usage insights"),
-                        info: L("From the quota readings recorded on this Mac while AIUsageBar runs.")) {
-            Text(L("Last 4 weeks")).font(.system(size: 10)).foregroundColor(.secondary)
+        let scope = pools.count > 1 ? activePool.map { "\($0.title) · \(L("Last 4 weeks"))" } ?? L("Last 4 weeks") : L("Last 4 weeks")
+        return DSSectionHeader(title: L("Usage insights"),
+                               info: L("From the quota readings recorded on this Mac while AIUsageBar runs.")) {
+            Text(scope).font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 
@@ -851,7 +871,7 @@ struct ClaudeUsageInsightsCard: View {
         let detail = habits.quietStart.map {
             L("Hardly used from %@ to %@.", InsightFormat.hour($0), InsightFormat.hour($0 + habits.quietLength))
         }
-        return Tile(id: "hours", symbol: "clock.fill", tint: QuotaInsightStyle.brand, label: L("Busiest hours"),
+        return Tile(id: "hours", symbol: "clock.fill", tint: brand, label: L("Busiest hours"),
                     value: value, detail: detail)
     }
 
@@ -870,8 +890,9 @@ struct ClaudeUsageInsightsCard: View {
     /// Cost of 1% of the weekly quota in local API-equivalent use, only when
     /// Claude Code is most of the account's use; otherwise why it is left out.
     @MainActor private var costLine: String? {
-        guard let history = dashboard.usageCostHistory,
-              let weekly = dashboard.claudeQuotaHistory.first(where: { $0.id == "weekly" }),
+        guard dashboard.id == "claude",
+              let history = dashboard.usageCostHistory,
+              let weekly = activeHistory.first(where: { $0.id == "weekly" }),
               let share = dashboard.claudeProductBreakdown?.rows.first(where: { $0.key == "claude_code" })?.percent
         else { return nil }
         guard share >= 70 else {
@@ -890,6 +911,7 @@ struct ClaudeUsageInsightsCard: View {
 struct QuotaScaleSection: View {
     let trend: QuotaScaleTrend
     let costLine: String?
+    var brand: Color = QuotaInsightStyle.brand
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -903,7 +925,7 @@ struct QuotaScaleSection: View {
                     Text(L("full 5-hour windows per week")).font(.system(size: 11)).foregroundColor(.secondary)
                     Spacer(minLength: 0)
                 }
-                QuotaScaleChart(trend: trend).frame(height: 78)
+                QuotaScaleChart(trend: trend, brand: brand).frame(height: 78)
                 Text(caption).font(.system(size: 10)).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -946,6 +968,7 @@ struct QuotaScaleSection: View {
 /// after a change drawn across each side.
 struct QuotaScaleChart: View {
     let trend: QuotaScaleTrend
+    var brand: Color = QuotaInsightStyle.brand
 
     var body: some View {
         Canvas { context, size in draw(in: &context, size: size) }
@@ -970,11 +993,11 @@ struct QuotaScaleChart: View {
             let position = CGPoint(x: x(point.day), y: y(point.windowsPerWeek))
             if index == 0 { line.move(to: position) } else { line.addLine(to: position) }
         }
-        context.stroke(line, with: .color(QuotaInsightStyle.brand.opacity(0.3)), lineWidth: 1)
+        context.stroke(line, with: .color(brand.opacity(0.3)), lineWidth: 1)
         for point in trend.points {
             let center = CGPoint(x: x(point.day), y: y(point.windowsPerWeek))
             context.fill(Path(ellipseIn: CGRect(x: center.x - 2.2, y: center.y - 2.2, width: 4.4, height: 4.4)),
-                         with: .color(QuotaInsightStyle.brand))
+                         with: .color(brand))
         }
         var labels: [(String, CGFloat)] = [(InsightFormat.day(first), plot.minX), (InsightFormat.day(last), plot.maxX)]
         if let shift = trend.shift, x(shift.day) - plot.minX > 30, plot.maxX - x(shift.day) > 30 {
@@ -1002,11 +1025,11 @@ struct QuotaScaleChart: View {
         var after = Path()
         after.move(to: CGPoint(x: split, y: y(shift.after)))
         after.addLine(to: CGPoint(x: x(last), y: y(shift.after)))
-        context.stroke(after, with: .color(QuotaInsightStyle.brand), lineWidth: 1.6)
+        context.stroke(after, with: .color(brand), lineWidth: 1.6)
         let font = Font.system(size: 9, weight: .semibold, design: .rounded).monospacedDigit()
         context.draw(Text(InsightFormat.count(shift.before)).font(font).foregroundColor(.secondary),
                      at: CGPoint(x: split - 4, y: y(shift.before) - 7), anchor: .trailing)
-        context.draw(Text(InsightFormat.count(shift.after)).font(font).foregroundColor(QuotaInsightStyle.brand),
+        context.draw(Text(InsightFormat.count(shift.after)).font(font).foregroundColor(brand),
                      at: CGPoint(x: plot.maxX + 5, y: y(shift.after)), anchor: .leading)
     }
 }
@@ -1014,6 +1037,7 @@ struct QuotaScaleChart: View {
 /// When the 5-hour quota gets used, by weekday and hour, as a weekly average.
 struct QuotaHabitHeatmap: View {
     let habits: QuotaHabits
+    var brand: Color = QuotaInsightStyle.brand
 
     private static let rowHeight: CGFloat = 9
     private static let gap: CGFloat = 2
@@ -1040,7 +1064,7 @@ struct QuotaHabitHeatmap: View {
     }
 
     private func color(_ level: Double) -> Color {
-        level <= 0 ? Color.primary.opacity(0.05) : QuotaInsightStyle.brand.opacity(0.12 + 0.83 * level)
+        level <= 0 ? Color.primary.opacity(0.05) : brand.opacity(0.12 + 0.83 * level)
     }
 
     private func draw(in context: inout GraphicsContext, size: CGSize) {

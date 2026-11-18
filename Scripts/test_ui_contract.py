@@ -180,6 +180,9 @@ assert "local_spend_history_regression.swift" in (ROOT / "Scripts" / "test_cost_
 assert "token_history_store_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert "antigravity_local_usage_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert 'AntigravityLocalUsage.supplementJSON' in client
+assert "AntigravityQuotaHistoryStore" in store
+assert 'dashboard.id == "claude" || dashboard.id == "antigravity"' in views
+assert "antigravity-quota-history-v1.json" in (SOURCES / "ClaudeQuotaHistory.swift").read_text()
 assert "maximumAttributableInterval" in local_spend
 assert "unattributedIntervals" in local_spend
 assert "calendar.isDate(previous.timestamp, inSameDayAs: next.timestamp)" in local_spend

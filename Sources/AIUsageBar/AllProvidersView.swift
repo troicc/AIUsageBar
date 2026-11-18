@@ -126,7 +126,7 @@ struct AllProviderCard: View {
                     .font(.system(size: 11))
                     .foregroundColor(DS.healthColor(status.health))
             }
-            if dashboard.id == "claude" {
+            if dashboard.id == "claude" || dashboard.id == "antigravity" {
                 claudeQuotaContent
                 ProviderDetailSectionTitle(title: dashboard.summarySectionTitle)
             }
@@ -138,7 +138,7 @@ struct AllProviderCard: View {
                     }
                 }
             }
-            if dashboard.id != "claude" {
+            if dashboard.id != "claude" && dashboard.id != "antigravity" {
                 ForEach(dashboard.quotas) { lane in
                     ProviderDetailQuotaRow(lane: lane, color: tint)
                 }
@@ -172,11 +172,17 @@ struct AllProviderCard: View {
 
     private var claudeQuotaContent: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ProviderDetailSectionTitle(title: dashboard.quotaSectionTitle)
+            ProviderDetailSectionTitle(
+                title: dashboard.quotaSectionTitle,
+                info: dashboard.id == "antigravity"
+                    ? L("Subscription quota shared across Antigravity on all devices. Token and cost figures below read local conversation databases on this Mac only.")
+                    : nil)
             ForEach(dashboard.quotas) { lane in
                 ProviderDetailQuotaRow(lane: lane, color: tint)
             }
-            ClaudeQuotaCoverageView(dashboard: dashboard)
+            if dashboard.id == "claude" {
+                ClaudeQuotaCoverageView(dashboard: dashboard)
+            }
             ClaudeQuotaHistoryView(dashboard: dashboard, showsHeadline: false)
             ClaudeUsageInsightsSection(dashboard: dashboard)
         }

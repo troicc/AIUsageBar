@@ -191,14 +191,17 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
     }
 
     /// Percentage points consumed between readings inside `range`: rises
-    /// within a window, plus each new window's reading counted from zero.
+    /// within a window above its high-water mark, plus each new window's
+    /// reading counted from zero. Tracking the window high-water mark keeps
+    /// minor server-side downward jitter from counting as repeated spending.
     func consumedPoints(in range: DateInterval) -> Double {
-        guard samples.count > 1 else { return 0 }
+        let steps = windowConsumptions()
+        guard steps.count > 1 else { return 0 }
         var total = 0.0
         for index in 1..<samples.count where samples[index - 1].timestamp >= range.start
             && samples[index].timestamp <= range.end
         {
-            total += consumed(before: index)
+            total += steps[index]
         }
         return total
     }
@@ -209,12 +212,32 @@ struct ClaudeQuotaSeries: Hashable, Identifiable {
         return reset(before: index) != nil ? next.usedPercent : max(0, next.usedPercent - previous.usedPercent)
     }
 
+    /// Net new points consumed at each sample index (`0` at index 0), ignoring
+    /// rebounds from small downward server fluctuations within the same window.
+    func windowConsumptions() -> [Double] {
+        guard let first = samples.first else { return [] }
+        var result = Array(repeating: 0.0, count: samples.count)
+        var highWater = first.usedPercent
+        for index in 1..<samples.count {
+            let current = samples[index].usedPercent
+            if reset(before: index) != nil {
+                result[index] = max(0, current)
+                highWater = max(0, current)
+            } else if current > highWater {
+                result[index] = current - highWater
+                highWater = current
+            }
+        }
+        return result
+    }
+
     /// Each rise, timed at the reading that ends it, from `start` on.
     func consumptionSteps(since start: Date = .distantPast) -> [(timestamp: Date, points: Double)] {
-        guard samples.count > 1 else { return [] }
+        let steps = windowConsumptions()
+        guard steps.count > 1 else { return [] }
         return (1..<samples.count).compactMap { index in
             guard samples[index - 1].timestamp >= start else { return nil }
-            let points = consumed(before: index)
+            let points = steps[index]
             return points > 0 ? (samples[index].timestamp, points) : nil
         }
     }
@@ -403,6 +426,273 @@ final class ClaudeQuotaHistoryStore {
                 $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
             }.sorted { $0.timestamp < $1.timestamp }
             return samples.isEmpty ? nil : ClaudeQuotaSeries(id: id, title: title, samples: samples)
+        }
+    }
+
+    private func save() {
+        guard canSave else { return }
+        do {
+            let directory = fileURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            encoder.outputFormatting = [.sortedKeys]
+            try encoder.encode(accounts).write(to: fileURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+            persistenceError = nil
+        } catch {
+            persistenceError = L("Quota history could not be saved. Current quotas are still available.")
+        }
+    }
+}
+
+/// One independent quota pool (for example Antigravity's Gemini pool vs its
+/// Claude/GPT pool), holding its 5-hour and weekly series together so pace,
+/// companion curves and weekly-to-5h ratios compare matching windows.
+struct QuotaTrendPool: Hashable, Identifiable {
+    let id: String
+    let title: String
+    let series: [ClaudeQuotaSeries]
+}
+
+struct AntigravityQuotaWindow {
+    let poolID: String
+    let poolTitle: String
+    let windowID: String
+    let windowTitle: String
+    let window: RateWindow
+}
+
+extension ProviderSnapshot {
+    var antigravityQuotaAccountKey: String? {
+        guard provider == "antigravity" else { return nil }
+        let email = [usage?.identity?.accountEmail, usage?.accountEmail, account]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .first { !$0.isEmpty }
+        let org = (usage?.identity?.accountOrganization ?? usage?.accountOrganization ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let email = email {
+            return StableIdentifier.hash("antigravity::\(email)::\(org)")
+        }
+        // Local CLI (`agy -p /usage`) and local language-server probes carry no
+        // email; OAuth and admin sources identify their account via email.
+        let lowerSource = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        guard !lowerSource.contains("oauth"), !lowerSource.contains("admin") else { return nil }
+        return StableIdentifier.hash("antigravity::local")
+    }
+
+    var antigravityQuotaWindows: [AntigravityQuotaWindow] {
+        guard provider == "antigravity", source?.lowercased().contains("admin") != true else { return [] }
+        var extracted: [AntigravityQuotaWindow] = []
+        var seen = Set<String>()
+
+        if let raw = rawJSON,
+           let data = raw.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let usageDict = (root["usage"] as? [String: Any]) ?? JSONKeys.normalizedDictionary(root)["usage"] as? [String: Any],
+           let extra = (usageDict["extraRateWindows"] as? [[String: Any]])
+               ?? (JSONKeys.normalizedDictionary(usageDict)["extraratewindows"] as? [[String: Any]])
+        {
+            for entry in extra {
+                if (entry["usageKnown"] as? Bool) == false { continue }
+                guard let id = entry["id"] as? String,
+                      let title = entry["title"] as? String,
+                      let windowDict = entry["window"] as? [String: Any],
+                      let windowData = try? JSONSerialization.data(withJSONObject: windowDict),
+                      let rate = try? JSONCoding.decoder.decode(RateWindow.self, from: windowData),
+                      let percent = rate.usedPercent, percent.isFinite, (0...100).contains(percent),
+                      let cadence = Self.antigravityCadence(window: rate, id: id, title: title),
+                      let pool = Self.antigravityPool(id: id, title: title)
+                else { continue }
+                let composite = "\(pool.id)::\(cadence.id)"
+                guard seen.insert(composite).inserted else { continue }
+                extracted.append(AntigravityQuotaWindow(
+                    poolID: pool.id,
+                    poolTitle: pool.title,
+                    windowID: cadence.id,
+                    windowTitle: cadence.title,
+                    window: rate))
+            }
+        }
+
+        if !extracted.isEmpty { return extracted }
+
+        // Fallback for legacy/model-quota payloads that only populate primary
+        // (Gemini representative) and secondary (Claude/GPT representative).
+        let referenceTime = usage?.updatedAt ?? Date()
+        let fallbacks: [(String, String, RateWindow?)] = [
+            ("gemini", L("Gemini"), usage?.primary),
+            ("claude-gpt", L("Claude/GPT"), usage?.secondary),
+        ]
+        for (poolID, poolTitle, candidate) in fallbacks {
+            guard let rate = candidate,
+                  let percent = rate.usedPercent, percent.isFinite, (0...100).contains(percent)
+            else { continue }
+            let cadence: (id: String, title: String)
+            if let minutes = rate.windowMinutes {
+                if abs(minutes - 10080) <= 1 {
+                    cadence = ("weekly", L("Weekly"))
+                } else if abs(minutes - 300) <= 1 {
+                    cadence = ("five-hour", L("5 hours"))
+                } else {
+                    continue
+                }
+            } else if let resetsAt = rate.resetsAt, resetsAt.timeIntervalSince(referenceTime) > 86_400 {
+                cadence = ("weekly", L("Weekly"))
+            } else {
+                cadence = ("five-hour", L("5 hours"))
+            }
+            let composite = "\(poolID)::\(cadence.id)"
+            guard seen.insert(composite).inserted else { continue }
+            extracted.append(AntigravityQuotaWindow(
+                poolID: poolID,
+                poolTitle: poolTitle,
+                windowID: cadence.id,
+                windowTitle: cadence.title,
+                window: rate))
+        }
+        return extracted
+    }
+
+    private static func antigravityCadence(window: RateWindow, id: String, title: String) -> (id: String, title: String)? {
+        if let minutes = window.windowMinutes {
+            if abs(minutes - 300) <= 1 { return ("five-hour", L("5 hours")) }
+            if abs(minutes - 10080) <= 1 { return ("weekly", L("Weekly")) }
+        }
+        let combined = "\(title) \(id)".lowercased().replacingOccurrences(of: "_", with: "-")
+        if combined.contains("5-hour") || combined.contains("5h") || combined.contains("five-hour")
+            || combined.contains("five hour") || combined.contains("session")
+        {
+            return ("five-hour", L("5 hours"))
+        }
+        if combined.contains("weekly") {
+            return ("weekly", L("Weekly"))
+        }
+        return nil
+    }
+
+    private static func antigravityPool(id: String, title: String) -> (id: String, title: String)? {
+        let combined = "\(title) \(id)".lowercased()
+        if combined.contains("gemini") {
+            return ("gemini", L("Gemini"))
+        }
+        if combined.contains("claude") || combined.contains("gpt") {
+            return ("claude-gpt", L("Claude/GPT"))
+        }
+        guard id.lowercased().hasPrefix("antigravity-quota-summary-") else { return nil }
+        var base = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" 5-hour", " weekly", " 5 hours", " Weekly"] where base.lowercased().hasSuffix(suffix.lowercased()) {
+            base = String(base.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let slug = base.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        guard !slug.isEmpty else { return nil }
+        return (slug, base.isEmpty ? L("Quota") : base)
+    }
+}
+
+/// Persists Antigravity quota percentages per pool (Gemini, Claude/GPT) and
+/// window (5-hour, weekly) in `antigravity-quota-history-v1.json`.
+final class AntigravityQuotaHistoryStore {
+    private let fileURL: URL
+    private var accounts: [String: [String: [ClaudeQuotaSample]]] = [:]
+    private var canSave = true
+    private(set) var persistenceError: String?
+
+    init(storageDirectory: URL? = nil) {
+        let root = storageDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("AIUsageBar", isDirectory: true)
+        fileURL = root.appendingPathComponent("antigravity-quota-history-v1.json")
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            do {
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                accounts = try decoder.decode([String: [String: [ClaudeQuotaSample]]].self, from: Data(contentsOf: fileURL))
+            } catch {
+                canSave = false
+                persistenceError = L("Quota history could not be read; the original file is preserved.")
+            }
+        }
+    }
+
+    func record(snapshot: ProviderSnapshot, now: Date = Date()) -> [QuotaTrendPool] {
+        guard let key = snapshot.antigravityQuotaAccountKey else { return [] }
+        var customTitles: [String: String] = [:]
+        for lane in snapshot.antigravityQuotaWindows {
+            customTitles[lane.poolID] = lane.poolTitle
+        }
+        if snapshot.error == nil, let reportedTime = snapshot.usage?.updatedAt,
+           reportedTime <= now
+        {
+            let measured = Date(timeIntervalSince1970: floor(reportedTime.timeIntervalSince1970))
+            var changed = false
+            for lane in snapshot.antigravityQuotaWindows {
+                let composite = "\(lane.poolID)::\(lane.windowID)"
+                var samples = accounts[key]?[composite] ?? []
+                guard samples.last.map({ measured > $0.timestamp }) ?? true else { continue }
+                samples.append(ClaudeQuotaSample(
+                    timestamp: measured,
+                    usedPercent: lane.window.usedPercent!,
+                    resetsAt: lane.window.resetsAt.map { Date(timeIntervalSince1970: floor($0.timeIntervalSince1970)) }))
+                accounts[key, default: [:]][composite] = samples
+                changed = true
+            }
+            if changed {
+                for account in Array(accounts.keys) {
+                    var lanes = accounts[account] ?? [:]
+                    for (lane, samples) in lanes {
+                        lanes[lane] = samples.filter {
+                            $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
+                        }.sorted { $0.timestamp < $1.timestamp }
+                    }
+                    accounts[account] = lanes.values.allSatisfy({ $0.isEmpty }) ? nil : lanes
+                }
+                save()
+            }
+        }
+
+        let storedLanes = accounts[key] ?? [:]
+        var poolIDs = Set<String>()
+        for composite in storedLanes.keys {
+            if let range = composite.range(of: "::") {
+                poolIDs.insert(String(composite[..<range.lowerBound]))
+            }
+        }
+        let orderedPools = poolIDs.sorted { lhs, rhs in
+            let leftRank = Self.poolRank(lhs), rightRank = Self.poolRank(rhs)
+            return leftRank != rightRank ? leftRank < rightRank : lhs < rhs
+        }
+        return orderedPools.compactMap { poolID in
+            let series: [ClaudeQuotaSeries] = [("five-hour", L("5 hours")), ("weekly", L("Weekly"))].compactMap { id, title in
+                let composite = "\(poolID)::\(id)"
+                let samples = (storedLanes[composite] ?? []).filter {
+                    $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
+                }.sorted { $0.timestamp < $1.timestamp }
+                return samples.isEmpty ? nil : ClaudeQuotaSeries(id: id, title: title, samples: samples)
+            }
+            guard !series.isEmpty else { return nil }
+            let title = Self.poolTitle(for: poolID, fallback: customTitles[poolID])
+            return QuotaTrendPool(id: poolID, title: title, series: series)
+        }
+    }
+
+    private static func poolRank(_ id: String) -> Int {
+        switch id {
+        case "gemini": return 0
+        case "claude-gpt": return 1
+        default: return 2
+        }
+    }
+
+    private static func poolTitle(for id: String, fallback: String?) -> String {
+        switch id {
+        case "gemini": return L("Gemini")
+        case "claude-gpt": return L("Claude/GPT")
+        default:
+            if let fallback = fallback, !fallback.isEmpty { return fallback }
+            return id.replacingOccurrences(of: "-", with: " ").capitalized
         }
     }
 

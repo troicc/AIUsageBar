@@ -2,6 +2,19 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-18 Antigravity 使用额度趋势曲线与使用洞察（已安装 build 202611181605，已提交到 main 并推送）
+
+- 原因：此前额度趋势图（`ClaudeQuotaHistoryView` + `ClaudeUsageInsightsSection`）与持久化存储（`ClaudeQuotaHistoryStore`）仅对 `claude` 生效，Antigravity（`agy`）虽然已能读取 4 个额度窗口和本地对话 Token，但每次刷新没有保存额度百分比样本，详细面板与“所有服务商”中也未挂载额度趋势曲线。
+- 存储与采样（`ClaudeQuotaHistory.swift`、`DashboardModels.swift`、`DashboardStore.swift`）：
+  - 新增 `QuotaTrendPool` 与 `AntigravityQuotaHistoryStore`（独立写入 `~/Library/Application Support/AIUsageBar/antigravity-quota-history-v1.json`，0700 目录 / 0600 文件，不触碰既有的 `claude-quota-history-v1.json`，损坏文件原样保留不覆盖）。
+  - 从 `extraRateWindows`（兼容旧版 `primary`/`secondary` 回退，忽略 `usageKnown == false` 的仅重置桶）按额度池（`gemini`、`claude-gpt`）× 周期（`five-hour`、`weekly`）分别采样；本机 `agy` CLI 无邮箱身份时使用 `antigravity::local` 哈希隔离，OAuth 账号按邮箱+组织哈希隔离，未识别身份的 OAuth 不落盘。
+  - `ClaudeQuotaSeries` 新增窗口内高水位差值计算（`windowConsumptions()`），用于 `consumedPoints`、`consumptionSteps` 与 `QuotaUsageRhythm`，避免 Google 返回的轻微剩余比例回跳（如 `0.990 ↔ 0.9996`）被反复累计成虚假消耗。
+- 界面展示（`ClaudeQuotaHistoryView.swift`、`ClaudeQuotaInsightsView.swift`、`DashboardViews.swift`、`AllProvidersView.swift`）：
+  - Antigravity 详情面板与全部服务商卡片现已展示完整的“额度趋势 · 24 小时 / 本周额度”与“使用洞察”；新增 `QuotaPoolSwitch` 胶囊切换器（`Gemini` | `Claude/GPT`，附当前周期剩余百分比，选择保存在 `antigravityQuotaPool` 并与下方“使用洞察”联动，首次默认选中当前消耗更高的额度池）。
+  - 曲线、填充、记录条、预测虚线、5 小时窗口柱、日期轴与热力图统一跟随当前服务商品牌色（`ProviderBrand.color(for: dashboard.id)`），Claude 保持原有橙色与归因图例不变，Antigravity 不显示仅适用于 Claude Code 的归因图例。
+  - 首次仅有 1 个采样点时（`showsWindowLeadIn`），自动从当前窗口起点（`0%`）画灰色的“无记录，直接相连”前导线段至当前读数圆点，避免刚启用时只剩右侧孤立单点。
+- 验证：新增 `AntigravityQuotaHistoryStore` 与服务端抖动回归（`Scripts/antigravity_local_usage_regression.swift`、`CoreBehaviorTests.swift`）及中英文深/浅色视觉 QA 截图（`Scripts/visual_model_attribution.swift`）；UI/release/smoke/Monterey patcher/provider auth/catalog contract、全套回归、双架构 Swift 5.6 typecheck、视觉几何断言、`git diff --check` 全部通过。`build_local_validation.sh`（Universal 2、macOS 12、65-provider offline smoke）通过，已安装 build 202611181605 并启动，旧版备份 `/private/tmp/aiusagebar-install-backup.KPav0X/AIUsageBar.app`。
+
 ## 2026-11-18 Antigravity 本地对话库 Token 与费用估算（App 内实现，已安装，已提交到 main 并推送）
 
 - 背景：`v0.46.0` 引擎的 `cost` 命令只支持 Claude、Codex、Cursor；用户选择在 App 侧直接参照上游 `CodexBar`（`v0.84.0`）读取本机 Antigravity 对话库，并接入现有本地用量、用量价值、每日图表和长期账本。

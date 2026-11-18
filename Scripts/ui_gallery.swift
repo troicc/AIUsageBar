@@ -40,11 +40,14 @@ enum UIGallery {
             .appendingPathComponent("ui-gallery-quota-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: historyCopy, withIntermediateDirectories: true)
         if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            try? FileManager.default.copyItem(
-                at: support.appendingPathComponent("AIUsageBar/claude-quota-history-v1.json"),
-                to: historyCopy.appendingPathComponent("claude-quota-history-v1.json"))
+            for file in ["claude-quota-history-v1.json", "antigravity-quota-history-v1.json"] {
+                try? FileManager.default.copyItem(
+                    at: support.appendingPathComponent("AIUsageBar/\(file)"),
+                    to: historyCopy.appendingPathComponent(file))
+            }
         }
         let quotaHistory = ClaudeQuotaHistoryStore(storageDirectory: historyCopy)
+        let antigravityQuotaHistory = AntigravityQuotaHistoryStore(storageDirectory: historyCopy)
         let activeMinutes = await ClaudeCodeActivityLog().activeMinutes()
         // History is keyed by the real identity, so it is looked up before anonymizing.
         let snapshots = demo ? fetched.map(anonymized) : fetched
@@ -68,6 +71,8 @@ enum UIGallery {
                     print(String(format: "%@: %d samples, Claude Code %.1f pts, other %.1f pts",
                                  series.id, series.samples.count, series.claudeCodePoints, series.otherDevicePoints))
                 }
+            } else if snapshot.provider == "antigravity" {
+                dashboard.quotaTrendPools = antigravityQuotaHistory.record(snapshot: original)
             }
             dashboards[snapshot.id] = dashboard
         }

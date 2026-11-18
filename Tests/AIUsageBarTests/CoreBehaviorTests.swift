@@ -496,6 +496,34 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertTrue(dashboard.history.allSatisfy { $0.spend == nil })
     }
 
+    func testAntigravityQuotaHistoryPoolsAndServerJitter() throws {
+        let directory = temporaryDirectory(named: "antigravity-quota")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = AntigravityQuotaHistoryStore(storageDirectory: directory)
+        let base = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-18T06:00:00Z"))
+        func makeSnapshot(iso: String, gemini5h: Double, claude5h: Double = 25) throws -> ProviderSnapshot {
+            let raw = """
+            {"provider":"antigravity","source":"cli","usage":{
+              "updatedAt":"\(iso)",
+              "extraRateWindows":[
+                {"id":"antigravity-quota-summary-g5","title":"Gemini 5-hour","window":{"usedPercent":\(gemini5h),"windowMinutes":300,"resetsAt":"2026-11-18T09:00:00Z"}},
+                {"id":"antigravity-quota-summary-gw","title":"Gemini weekly","window":{"usedPercent":4,"windowMinutes":10080,"resetsAt":"2026-11-25T06:00:00Z"}},
+                {"id":"antigravity-quota-summary-c5","title":"Claude/GPT 5-hour","window":{"usedPercent":\(claude5h),"windowMinutes":300,"resetsAt":"2026-11-18T09:00:00Z"}},
+                {"id":"antigravity-quota-summary-cw","title":"Claude/GPT weekly","window":{"usedPercent":8,"windowMinutes":10080,"resetsAt":"2026-11-25T06:00:00Z"}}
+              ]
+            }}
+            """
+            return try XCTUnwrap(CLIClient.decodeSnapshots(raw).first)
+        }
+        _ = store.record(snapshot: try makeSnapshot(iso: "2026-11-18T06:00:00Z", gemini5h: 1.0), now: base)
+        _ = store.record(snapshot: try makeSnapshot(iso: "2026-11-18T06:05:00Z", gemini5h: 0.04), now: base.addingTimeInterval(300))
+        _ = store.record(snapshot: try makeSnapshot(iso: "2026-11-18T06:10:00Z", gemini5h: 1.0), now: base.addingTimeInterval(600))
+        let pools = store.record(snapshot: try makeSnapshot(iso: "2026-11-18T06:15:00Z", gemini5h: 6.0), now: base.addingTimeInterval(900))
+        XCTAssertEqual(pools.map(\.id), ["gemini", "claude-gpt"])
+        let gemini5h = try XCTUnwrap(pools.first?.series.first { $0.id == "five-hour" })
+        XCTAssertEqual(gemini5h.consumedPoints(in: DateInterval(start: base, end: base.addingTimeInterval(900))), 5.0, accuracy: 1e-6)
+    }
+
     private func number(_ payload: [String: Any], _ key: String) -> Double {
         (payload[key] as? NSNumber)?.doubleValue ?? .nan
     }

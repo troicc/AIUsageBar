@@ -71,7 +71,7 @@ struct ProviderDetailPopoverView: View {
                     statusContent
                     balanceHero
                     quotaContent
-                    if dashboard.id == "claude" {
+                    if dashboard.id == "claude" || dashboard.id == "antigravity" {
                         ClaudeQuotaHistoryView(dashboard: dashboard, showsHeadline: false)
                         ClaudeUsageInsightsSection(dashboard: dashboard)
                     }

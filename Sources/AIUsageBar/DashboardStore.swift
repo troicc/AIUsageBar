@@ -52,6 +52,7 @@ final class DashboardStore: ObservableObject {
     private static let interactiveSupplementMaxAge: TimeInterval = 5 * 60
     private let quotaTrendStore = LocalQuotaTrendStore()
     private let claudeQuotaHistoryStore = ClaudeQuotaHistoryStore()
+    private let antigravityQuotaHistoryStore = AntigravityQuotaHistoryStore()
     /// Local Claude Code activity, used to split shared-quota consumption
     /// between Claude Code and web/desktop/other devices.
     private let claudeActivity = ClaudeCodeActivityLog()
@@ -339,6 +340,13 @@ final class DashboardStore: ObservableObject {
     }
 
     private func attachClaudeQuotaHistory(to dashboard: inout ProviderDashboard, snapshot: ProviderSnapshot) {
+        if snapshot.provider == "antigravity" {
+            dashboard.quotaTrendPools = antigravityQuotaHistoryStore.record(snapshot: snapshot)
+            dashboard.claudeQuotaHistoryNotice = snapshot.antigravityQuotaAccountKey == nil
+                ? L("Account identity unavailable. History starts after this account can be identified.")
+                : antigravityQuotaHistoryStore.persistenceError
+            return
+        }
         guard snapshot.provider == "claude" else { return }
         dashboard.claudeQuotaHistory = claudeQuotaHistoryStore.record(snapshot: snapshot)
             // The activity log only covers about a day; older rises stay unattributed.
@@ -358,10 +366,12 @@ final class DashboardStore: ObservableObject {
             rebuilt[snapshot.id] = DashboardParser.dashboard(snapshot: snapshot,
                 supplementalJSON: presentationSupplementBySnapshot[snapshot.id])
             rebuilt[snapshot.id]?.claudeQuotaHistory = dashboards[snapshot.id]?.claudeQuotaHistory ?? []
+            rebuilt[snapshot.id]?.quotaTrendPools = dashboards[snapshot.id]?.quotaTrendPools ?? []
             rebuilt[snapshot.id]?.claudeQuotaHistoryNotice = dashboards[snapshot.id]?.claudeQuotaHistoryNotice
             rebuilt[snapshot.id]?.claudeProductBreakdown = dashboards[snapshot.id]?.claudeProductBreakdown
             rebuilt[snapshot.id]?.claudeIncludedCredit = dashboards[snapshot.id]?.claudeIncludedCredit
             rebuilt[snapshot.id]?.claudeCreditHistory = dashboards[snapshot.id]?.claudeCreditHistory
+            rebuilt[snapshot.id]?.subscriptionStartedAt = dashboards[snapshot.id]?.subscriptionStartedAt
         }
         dashboards = rebuilt
         onRefreshStateChanged?()

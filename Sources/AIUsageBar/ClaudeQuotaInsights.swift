@@ -144,8 +144,9 @@ struct QuotaUsageRhythm: Hashable {
               now.timeIntervalSince(first.timestamp) >= 3 * 86_400 else { return nil }
         var points = Array(repeating: Array(repeating: 0.0, count: 24), count: 7)
         var seen = points
+        let steps = recent.windowConsumptions()
         for index in 1..<samples.count where samples[index - 1].timestamp >= since && samples[index].timestamp <= now {
-            let amount = recent.consumed(before: index)
+            let amount = steps[index]
             guard amount > 0 else { continue }
             let end = samples[index].timestamp
             let span = DateInterval(start: min(end, recent.reset(before: index)?.start ?? samples[index - 1].timestamp), end: end)

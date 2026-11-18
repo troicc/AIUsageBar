@@ -312,4 +312,89 @@ do {
             "expected only the 4 localized scoped Antigravity lanes, got \(dash.quotas.map(\.title))")
 }
 
+// 7. Antigravity quota trend pools: local CLI account key, Gemini & Claude/GPT 5h/weekly series,
+//    usageKnown filtering, OAuth account isolation, persistence permissions, and server jitter smoothing.
+do {
+    let quotaDir = root.appendingPathComponent("quota-store", isDirectory: true)
+    let store = AntigravityQuotaHistoryStore(storageDirectory: quotaDir)
+    let base = ISO8601DateFormatter().date(from: "2026-11-18T06:00:00Z")!
+
+    func makeAntigravitySnapshot(
+        updatedISO: String,
+        gemini5h: Double,
+        geminiWeekly: Double = 4,
+        claude5h: Double = 25,
+        claudeWeekly: Double = 8,
+        source: String = "cli",
+        email: String? = nil,
+        claudeWeeklyKnown: Bool = true
+    ) -> ProviderSnapshot {
+        let emailJSON = email.map { "\"accountEmail\":\"\($0)\"," } ?? ""
+        let raw = """
+        {"provider":"antigravity","source":"\(source)","usage":{
+          \(emailJSON)"updatedAt":"\(updatedISO)",
+          "primary":{"usedPercent":\(gemini5h),"windowMinutes":300,"resetsAt":"2026-11-18T09:00:00Z"},
+          "secondary":{"usedPercent":\(claude5h),"windowMinutes":300,"resetsAt":"2026-11-18T09:00:00Z"},
+          "extraRateWindows":[
+            {"id":"antigravity-quota-summary-g5","title":"Gemini 5-hour","usageKnown":true,"window":{"usedPercent":\(gemini5h),"windowMinutes":300,"resetsAt":"2026-11-18T09:00:00Z"}},
+            {"id":"antigravity-quota-summary-gw","title":"Gemini weekly","usageKnown":true,"window":{"usedPercent":\(geminiWeekly),"windowMinutes":10080,"resetsAt":"2026-11-25T06:00:00Z"}},
+            {"id":"antigravity-quota-summary-c5","title":"Claude/GPT 5-hour","usageKnown":true,"window":{"usedPercent":\(claude5h),"windowMinutes":300,"resetsAt":"2026-11-18T09:00:00Z"}},
+            {"id":"antigravity-quota-summary-cw","title":"Claude/GPT weekly","usageKnown":\(claudeWeeklyKnown),"window":{"usedPercent":\(claudeWeekly),"windowMinutes":10080,"resetsAt":"2026-11-25T06:00:00Z"}}
+          ]
+        }}
+        """
+        let decoded = try! JSONCoding.decoder.decode(ProviderSnapshot.self, from: Data(raw.utf8))
+        return ProviderSnapshot(
+            provider: decoded.provider, version: decoded.version, source: decoded.source,
+            status: decoded.status, usage: decoded.usage, credits: decoded.credits,
+            account: decoded.account, plan: decoded.plan, error: decoded.error, rawJSON: raw)
+    }
+
+    let first = makeAntigravitySnapshot(updatedISO: "2026-11-18T06:00:00.250Z", gemini5h: 1.0, claudeWeeklyKnown: false)
+    let pools1 = store.record(snapshot: first, now: base.addingTimeInterval(1))
+    require(pools1.map(\.id) == ["gemini", "claude-gpt"], "expected Gemini and Claude/GPT pools in order")
+    require(pools1[0].series.map(\.id) == ["five-hour", "weekly"], "Gemini should have 5h and weekly series")
+    require(pools1[1].series.map(\.id) == ["five-hour"], "usageKnown=false bucket must not record")
+    require(store.record(snapshot: first, now: base.addingTimeInterval(2)) == pools1, "enrichment repeat must not duplicate")
+
+    // Oscillating Gemini server readings (1.0% <-> 0.04%, i.e. 0.990 <-> 0.9996 remaining)
+    // followed by real use to 5.5%: only the net rise above high-water (4.5 pts) counts.
+    let timeline: [(Int, Double)] = [(300, 0.04), (600, 1.0), (900, 0.04), (1200, 1.0), (1500, 5.5)]
+    var latestPools = pools1
+    for (offset, g5) in timeline {
+        let t = base.addingTimeInterval(Double(offset))
+        let iso = FlexibleDate.iso8601String(t)
+        let snap = makeAntigravitySnapshot(updatedISO: iso, gemini5h: g5)
+        latestPools = store.record(snapshot: snap, now: t)
+    }
+    let gemini5hSeries = latestPools[0].series.first { $0.id == "five-hour" }!
+    require(gemini5hSeries.samples.count == 6, "all 6 distinct timestamps should persist")
+    let consumed = gemini5hSeries.consumedPoints(in: DateInterval(start: base, end: base.addingTimeInterval(1800)))
+    require(abs(consumed - 4.5) < 1e-6, "server jitter must not inflate consumedPoints, got \(consumed)")
+
+    // Reload from disk, verify 0600 permissions and no plaintext email.
+    let oauthA = makeAntigravitySnapshot(updatedISO: "2026-11-18T06:30:00Z", gemini5h: 42, source: "oauth", email: "alice@example.com")
+    let oauthUnidentified = makeAntigravitySnapshot(updatedISO: "2026-11-18T06:30:00Z", gemini5h: 99, source: "oauth", email: nil)
+    require(oauthUnidentified.antigravityQuotaAccountKey == nil, "OAuth without email must not fall back to local CLI key")
+    require(store.record(snapshot: oauthUnidentified, now: base.addingTimeInterval(2000)).isEmpty, "unidentified OAuth must not record")
+    let oauthPools = store.record(snapshot: oauthA, now: base.addingTimeInterval(2000))
+    require(oauthPools[0].series[0].samples.count == 1 && oauthPools[0].series[0].samples[0].usedPercent == 42,
+            "OAuth account must stay isolated from local CLI history")
+
+    let reloaded = AntigravityQuotaHistoryStore(storageDirectory: quotaDir)
+    require(reloaded.record(snapshot: first, now: base.addingTimeInterval(2000))[0].series[0].samples.count == 6,
+            "reloaded store should preserve local CLI history")
+    let file = quotaDir.appendingPathComponent("antigravity-quota-history-v1.json")
+    let attrs = try! FileManager.default.attributesOfItem(atPath: file.path)
+    require((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o600, "quota file must be 0600")
+    let diskText = String(decoding: try! Data(contentsOf: file), as: UTF8.self)
+    require(!diskText.contains("alice@example.com"), "quota file must never store raw email")
+
+    try! Data("corrupt".utf8).write(to: file)
+    let broken = AntigravityQuotaHistoryStore(storageDirectory: quotaDir)
+    _ = broken.record(snapshot: first, now: base.addingTimeInterval(3000))
+    require(broken.persistenceError != nil && (try! Data(contentsOf: file)) == Data("corrupt".utf8),
+            "corrupt quota file must be preserved")
+}
+
 print("Antigravity local usage regression tests passed.")

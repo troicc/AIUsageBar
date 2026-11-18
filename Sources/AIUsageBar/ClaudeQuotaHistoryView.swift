@@ -42,9 +42,12 @@ struct ClaudeQuotaHistoryView: View {
     @State private var pendingDay: Date?
     @State private var cache = QuotaTrendCache()
     @AppStorage(QuotaChartMode.preferenceKey) private var storedMode = QuotaChartMode.insights.rawValue
+    @AppStorage("antigravityQuotaPool") private var storedPool = ""
     let now: Date
     /// Overrides the display style chosen in Settings, for previews.
     private let forcedMode: QuotaChartMode?
+    /// Overrides the selected quota pool, for previews and tests.
+    private let forcedPool: String?
     /// Off where the quota rows above already show what is left: the
     /// headline then keeps only the reset, forecast and pace.
     private let showsHeadline: Bool
@@ -52,32 +55,61 @@ struct ClaudeQuotaHistoryView: View {
     /// `expanded` is kept for callers; the trend is always shown now.
     init(dashboard: ProviderDashboard, expanded: Bool = true, now: Date = Date(), window: String = "five-hour",
          scrolledBack: TimeInterval = 0, pointer: CGPoint? = nil, mode: QuotaChartMode? = nil, day: Date? = nil,
-         showsHeadline: Bool = true) {
+         pool: String? = nil, showsHeadline: Bool = true) {
         self.dashboard = dashboard
         self.showsHeadline = showsHeadline
         self.now = now
         forcedMode = mode
+        forcedPool = pool
         _selected = State(initialValue: window)
         _pan = State(initialValue: scrolledBack)
         _pointer = State(initialValue: QuotaPointer(pointer))
         _selectedDay = State(initialValue: day)
     }
 
+    private var brand: Color { ProviderBrand.color(for: dashboard.id) }
+
     private var official: ClaudeProductBreakdown? { dashboard.claudeProductBreakdown }
 
     private var showsInsights: Bool { (forcedMode ?? QuotaChartMode(rawValue: storedMode) ?? .insights) == .insights }
 
+    private var pools: [QuotaTrendPool] { dashboard.effectiveQuotaTrendPools }
+
+    private var activePool: QuotaTrendPool? {
+        Self.resolvePool(in: pools, stored: storedPool, forced: forcedPool)
+    }
+
+    private var activeHistory: [ClaudeQuotaSeries] {
+        activePool?.series ?? []
+    }
+
+    static func resolvePool(in pools: [QuotaTrendPool], stored: String, forced: String?) -> QuotaTrendPool? {
+        if let forced = forced, let match = pools.first(where: { $0.id == forced }) { return match }
+        if !stored.isEmpty, let match = pools.first(where: { $0.id == stored }) { return match }
+        if pools.count > 1,
+           let busiest = pools.max(by: { latestUsedPercent($0) < latestUsedPercent($1) }),
+           latestUsedPercent(busiest) > 0
+        {
+            return busiest
+        }
+        return pools.first
+    }
+
+    private static func latestUsedPercent(_ pool: QuotaTrendPool) -> Double {
+        (pool.series.first { $0.id == "five-hour" } ?? pool.series.first)?.samples.last?.usedPercent ?? 0
+    }
+
     /// Renewal or expiry date, from the account, the subscription card or the
     /// subscription start; only the classic weekly view spans the subscription month.
     private var subscriptionDate: Date? {
-        let lane = dashboard.claudeQuotaHistory.first { $0.id == selected } ?? dashboard.claudeQuotaHistory.first
+        let lane = activeHistory.first { $0.id == selected } ?? activeHistory.first
         guard !showsInsights, lane?.id == "weekly" else { return nil }
         let manual = dashboard.subscriptionDatePreferenceKey.flatMap { UserDefaults.standard.string(forKey: $0) } ?? ""
         return dashboard.subscriptionTiming(manual: manual, now: now)?.date
     }
 
     private var facts: QuotaTrendFacts {
-        cache.facts(for: QuotaTrendCache.Key(history: dashboard.claudeQuotaHistory, selected: selected,
+        cache.facts(for: QuotaTrendCache.Key(history: activeHistory, selected: selected,
                                              insights: showsInsights, subscriptionDate: subscriptionDate),
                     now: now)
     }
@@ -99,6 +131,10 @@ struct ClaudeQuotaHistoryView: View {
             if showsInsights { insightsLayout(facts) } else { classicLayout(facts) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: activePool?.id) { _ in
+            pan = 0
+            selectedDay = nil
+        }
         .onChange(of: selected) { _ in
             pan = 0
             selectedDay = nil
@@ -112,15 +148,25 @@ struct ClaudeQuotaHistoryView: View {
     }
 
     private var sharedNote: String {
-        official != nil
+        if dashboard.id == "antigravity" {
+            return L("Sampled from Antigravity quota readings on this Mac across Gemini and Claude/GPT pools.")
+        }
+        return official != nil
             ? L("Shared by Claude Code, Cowork, chats and other apps. The weekly breakdown comes from your Claude account.")
             : L("Shared by web, desktop and Claude Code. Sources are estimated from Claude Code activity on this Mac; web chat tokens and costs are not available.")
     }
 
     private func header(_ facts: QuotaTrendFacts) -> some View {
-        DSSectionHeader(title: title(facts), info: showsInsights ? sharedNote : nil) {
-            if dashboard.claudeQuotaHistory.count > 1 {
-                QuotaWindowSwitch(series: dashboard.claudeQuotaHistory, selected: $selected)
+        VStack(alignment: .leading, spacing: 10) {
+            DSSectionHeader(title: title(facts), info: showsInsights ? sharedNote : nil) {
+                if activeHistory.count > 1 {
+                    QuotaWindowSwitch(series: activeHistory, selected: $selected)
+                }
+            }
+            if pools.count > 1, let activeID = activePool?.id {
+                QuotaPoolSwitch(pools: pools, windowID: selected, selectedID: activeID, brand: brand) { chosen in
+                    storedPool = chosen
+                }
             }
         }
     }
@@ -134,7 +180,7 @@ struct ClaudeQuotaHistoryView: View {
                 summary(lane, last: last)
                 navigation(facts)
                 chart(series, facts: facts)
-                if official == nil { legend(lane) }
+                if dashboard.id == "claude", official == nil { legend(lane) }
             } else {
                 Text(dashboard.claudeQuotaHistoryNotice ?? L("History begins with successful refreshes. No samples in the last 24 hours."))
                     .font(.system(size: 11)).foregroundColor(.secondary)
@@ -163,7 +209,7 @@ struct ClaudeQuotaHistoryView: View {
             header(facts)
             if let lane = facts.lane, let series = series, let last = lane.samples.last {
                 QuotaTrendHero(title: lane.title, last: last, pace: facts.pace, isWeekly: facts.isWeekly, now: facts.now,
-                               showsRemaining: showsHeadline)
+                               showsRemaining: showsHeadline, brand: brand)
                 insightChart(series, facts: facts)
                 footer(lane, facts: facts)
             } else {
@@ -175,21 +221,28 @@ struct ClaudeQuotaHistoryView: View {
 
     /// The 5-hour allowance, where the quota went, and any notice.
     private func footer(_ lane: ClaudeQuotaSeries, facts: QuotaTrendFacts) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let perWeek = facts.windowsPerWeek {
-                QuotaAllowanceFigures(perWeek: perWeek, weeklyUsed: facts.weeklyUsed)
-            }
-            if let official = official {
-                ClaudeProductBreakdownView(breakdown: official)
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    DSSectionLabel(title: L("Where it went"))
-                    legend(lane)
+        let hasAllowance = facts.windowsPerWeek != nil
+        let hasAttribution = dashboard.id == "claude" || official != nil
+        let hasExtra = hasAllowance || hasAttribution || dashboard.claudeIncludedCredit != nil || dashboard.claudeQuotaHistoryNotice != nil
+        return Group {
+            if hasExtra {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let perWeek = facts.windowsPerWeek {
+                        QuotaAllowanceFigures(perWeek: perWeek, weeklyUsed: facts.weeklyUsed)
+                    }
+                    if let official = official {
+                        ClaudeProductBreakdownView(breakdown: official)
+                    } else if dashboard.id == "claude" {
+                        VStack(alignment: .leading, spacing: 8) {
+                            DSSectionLabel(title: L("Where it went"))
+                            legend(lane)
+                        }
+                    }
+                    if let credit = dashboard.claudeIncludedCredit { ClaudeIncludedCreditView(credit: credit) }
+                    if let notice = dashboard.claudeQuotaHistoryNotice {
+                        Text(notice).font(.system(size: 10)).foregroundColor(.secondary)
+                    }
                 }
-            }
-            if let credit = dashboard.claudeIncludedCredit { ClaudeIncludedCreditView(credit: credit) }
-            if let notice = dashboard.claudeQuotaHistoryNotice {
-                Text(notice).font(.system(size: 10)).foregroundColor(.secondary)
             }
         }
     }
@@ -261,14 +314,15 @@ struct ClaudeQuotaHistoryView: View {
         // The 5-hour view also shows the weekly window it draws from.
         let hasCompanion = !facts.isWeekly && facts.weeklyLane != nil
         let cycles = hasCompanion ? facts.weeklyCycles.filter { $0.overlaps(range) } : []
+        let hasLeadIn = facts.lane?.samples.count == 1 && facts.lane?.samples.first?.resetsAt != nil
         return VStack(alignment: .leading, spacing: 4) {
             plotArea(series, facts: facts, scale: scale, longGap: longGap, weeks: [])
                 .frame(height: 128)
-            QuotaRecordedStrip(spans: spans, scale: scale)
+            QuotaRecordedStrip(spans: spans, scale: scale, brand: brand)
             if !cycles.isEmpty { QuotaCycleStrip(cycles: cycles, scale: scale, now: facts.now) }
             QuotaTimeAxis(scale: scale, now: facts.now, daily: facts.isWeekly)
-            if spans.count > 1 || hasCompanion {
-                QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: hasCompanion).padding(.top, 2)
+            if spans.count > 1 || hasLeadIn || hasCompanion {
+                QuotaTrendKey(showsGaps: spans.count > 1 || hasLeadIn, showsWeekly: hasCompanion, brand: brand).padding(.top, 2)
             }
             if let estimate = facts.allowance { fiveHourAllowance(estimate) }
         }
@@ -284,23 +338,27 @@ struct ClaudeQuotaHistoryView: View {
         let companion = facts.drawnCompanion?.within(range)
         let pointer = self.pointer
         let maxPan = facts.maxPan
+        let brand = self.brand
+        let showsLeadIn = facts.lane?.samples.count == 1 && drawn.samples.first == facts.lane?.samples.first
         // Per-segment source coloring is an estimate; when the
         // account reports the official breakdown, show that instead.
         return GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
                 if picksDays {
-                    QuotaDayColumns(scale: scale, selected: selectedDay).equatable()
+                    QuotaDayColumns(scale: scale, selected: selectedDay, brand: brand).equatable()
                 }
                 ClaudeQuotaPlot(series: drawn, scale: scale, now: facts.now,
                                 longGap: longGap,
+                                brand: brand,
                                 showsLatest: series.samples.last == facts.lane?.samples.last
                                     && range.contains(series.samples.last?.timestamp ?? .distantPast),
-                                showsSources: official == nil,
+                                showsSources: dashboard.id == "claude" && official == nil,
+                                showsWindowLeadIn: showsLeadIn,
                                 companion: companion)
                     .equatable()
                 if showsInsights {
                     QuotaPaceOverlay(cycles: weeks, pace: range.end >= facts.now.addingTimeInterval(-60) ? facts.pace : nil,
-                                     quiet: facts.quiet, scale: scale, now: facts.now)
+                                     quiet: facts.quiet, scale: scale, now: facts.now, brand: brand)
                         .equatable()
                 }
                 QuotaHoverLayer(pointer: pointer, series: series, scale: scale, hidden: dragStartPan != nil)
@@ -335,23 +393,25 @@ struct ClaudeQuotaHistoryView: View {
         let weeks = isWeekly ? facts.laneCycles.filter { $0.overlaps(range) } : []
         let windows = isWeekly ? facts.fiveHourCycles.filter { $0.overlaps(range) } : []
         let now = facts.now
+        let hasLeadIn = facts.lane?.samples.count == 1 && facts.lane?.samples.first?.resetsAt != nil
         return VStack(alignment: .leading, spacing: 6) {
             navigation(facts)
             plotArea(series, facts: facts, scale: scale, longGap: longGap, weeks: weeks)
                 .frame(height: 140)
             VStack(spacing: 5) {
-                QuotaRecordedStrip(spans: spans, scale: scale).laneLabel(L("Logged"))
+                QuotaRecordedStrip(spans: spans, scale: scale, brand: brand).laneLabel(L("Logged"))
                 if !cycles.isEmpty {
                     QuotaCycleStrip(cycles: cycles, scale: scale, now: now).laneLabel(L("Week"))
                 }
             }
             if isWeekly {
-                QuotaDayAxis(scale: scale, now: now, selected: $selectedDay)
+                QuotaDayAxis(scale: scale, now: now, selected: $selectedDay, brand: brand)
                 if let day = selectedDay.flatMap({ Calendar.current.dateInterval(of: .day, for: $0) }),
                    day.end > range.start, day.start < range.end, let lane = facts.lane
                 {
                     QuotaDayDetail(day: day, weekly: lane, fiveHour: facts.fiveHourLane,
                                    fiveHourCycles: facts.fiveHourCycles, pace: facts.pace, now: now,
+                                   brand: brand,
                                    showDay: facts.fiveHourLane == nil ? nil : {
                                        pendingDay = day.start
                                        selected = "five-hour"
@@ -359,11 +419,11 @@ struct ClaudeQuotaHistoryView: View {
                                    close: { selectedDay = nil })
                         .padding(.top, 2)
                 }
-                QuotaWindowBars(windows: windows, scale: scale).equatable().padding(.top, 8)
-                QuotaPaceKey(showsQuiet: facts.pace?.followsRhythm == true && range.end >= now).padding(.top, 6)
+                QuotaWindowBars(windows: windows, scale: scale, brand: brand).equatable().padding(.top, 8)
+                QuotaPaceKey(showsQuiet: facts.pace?.followsRhythm == true && range.end >= now, brand: brand).padding(.top, 6)
             } else {
                 QuotaTimeAxis(scale: scale, now: now, daily: false)
-                QuotaTrendKey(showsGaps: spans.count > 1, showsWeekly: hasCompanion).padding(.top, 6)
+                QuotaTrendKey(showsGaps: spans.count > 1 || hasLeadIn, showsWeekly: hasCompanion, brand: brand).padding(.top, 6)
             }
         }
         .padding(.top, 2)
@@ -455,6 +515,52 @@ struct ClaudeQuotaHistoryView: View {
 enum QuotaSourceStyle {
     static let claudeCode = ProviderBrand.color(for: "claude")
     static let otherDevices = Color(nsColor: .systemIndigo)
+}
+
+/// Compact capsule switch between quota pools (such as Gemini vs Claude/GPT).
+private struct QuotaPoolSwitch: View {
+    let pools: [QuotaTrendPool]
+    let windowID: String
+    let selectedID: String
+    let brand: Color
+    let onSelect: (String) -> Void
+
+    private func remaining(for pool: QuotaTrendPool) -> Double? {
+        let lane = pool.series.first { $0.id == windowID } ?? pool.series.first
+        return lane?.samples.last.map { max(0, 100 - $0.usedPercent) }
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(pools) { pool in
+                let isSelected = pool.id == selectedID
+                let left = remaining(for: pool)
+                Button(action: { onSelect(pool.id) }) {
+                    HStack(spacing: 5) {
+                        Text(pool.title)
+                            .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                            .lineLimit(1)
+                        if let left = left {
+                            Text(String(format: "%.0f%%", left))
+                                .font(.system(size: 10, weight: .regular, design: .rounded).monospacedDigit())
+                                .foregroundColor(left < 15 ? Color(nsColor: .systemRed) : .secondary)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(isSelected ? brand.opacity(0.14) : Color.clear))
+                    .overlay(Capsule().strokeBorder(isSelected ? brand.opacity(0.32) : Color.clear, lineWidth: 0.5))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(isSelected ? .primary : .secondary)
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(Color.primary.opacity(0.05)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(L("Quota pool")))
+    }
 }
 
 /// Compact capsule switch between quota windows.
@@ -681,9 +787,12 @@ private struct ClaudeQuotaPlot: View, Equatable {
     let scale: QuotaTrendScale
     let now: Date
     let longGap: TimeInterval
+    var brand: Color = QuotaSourceStyle.claudeCode
     /// Whether the last reading is the latest one, marked as the current value.
     var showsLatest = true
     var showsSources = true
+    /// Connects the window's start (`0%`) to a newly recorded single sample.
+    var showsWindowLeadIn = false
     /// The weekly window, drawn on the same scale under the 5-hour line.
     var companion: ClaudeQuotaSeries? = nil
 
@@ -695,6 +804,13 @@ private struct ClaudeQuotaPlot: View, Equatable {
 
     private func point(_ sample: ClaudeQuotaSample, size: CGSize) -> CGPoint {
         CGPoint(x: x(sample.timestamp, size: size), y: y(sample.usedPercent, size))
+    }
+
+    private func windowLeadIn(for lane: ClaudeQuotaSeries, size: CGSize) -> (start: CGPoint, end: CGPoint)? {
+        guard lane.samples.count == 1, let only = lane.samples.first, only.resetsAt != nil else { return nil }
+        let start = lane.windowStart(at: 0)
+        guard start < only.timestamp else { return nil }
+        return (CGPoint(x: x(start, size: size), y: y(0, size)), point(only, size: size))
     }
 
     /// Indices of samples grouped into connected runs.
@@ -740,11 +856,16 @@ private struct ClaudeQuotaPlot: View, Equatable {
             let runs = self.runs
             drawResetMarkers(in: &plot, size: size)
             plot.fill(area(runs, size: size), with: .linearGradient(
-                Gradient(colors: [QuotaSourceStyle.claudeCode.opacity(0.22), QuotaSourceStyle.claudeCode.opacity(0.0)]),
+                Gradient(colors: [brand.opacity(0.22), brand.opacity(0.0)]),
                 startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
             if let companion = companion, !companion.samples.isEmpty {
                 plot.stroke(companionLine(companion, size: size), with: .color(QuotaTrendStyle.weekly),
                             style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+            }
+            if showsWindowLeadIn, let leadIn = windowLeadIn(for: series, size: size) {
+                plot.stroke(line([leadIn.start, leadIn.end], smooth: false),
+                            with: .color(QuotaTrendStyle.unrecorded),
+                            style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
             }
             for run in runs.dropFirst() { drawConnector(run[0], in: &plot, size: size) }
             for run in runs { drawRun(run, in: &plot, size: size) }
@@ -808,6 +929,14 @@ private struct ClaudeQuotaPlot: View, Equatable {
     private func area(_ runs: [[Int]], size: CGSize) -> Path {
         Path { path in
             let baseline = size.height - 6
+            if showsWindowLeadIn, let leadIn = windowLeadIn(for: series, size: size) {
+                path.move(to: CGPoint(x: leadIn.start.x, y: baseline))
+                path.addLine(to: leadIn.start)
+                path.addLine(to: leadIn.end)
+                path.addLine(to: CGPoint(x: leadIn.end.x, y: baseline))
+                path.closeSubpath()
+                return
+            }
             var lastX: CGFloat?
             for (offset, run) in runs.enumerated() {
                 let points = run.map { point(series.samples[$0], size: size) }
@@ -831,6 +960,11 @@ private struct ClaudeQuotaPlot: View, Equatable {
     /// to zero and rises again from the new window's start.
     private func companionLine(_ companion: ClaudeQuotaSeries, size: CGSize) -> Path {
         Path { path in
+            if showsWindowLeadIn, let leadIn = windowLeadIn(for: companion, size: size) {
+                path.move(to: leadIn.start)
+                path.addLine(to: leadIn.end)
+                return
+            }
             let zero = y(0, size)
             for (index, sample) in companion.samples.enumerated() {
                 let next = point(sample, size: size)
@@ -876,7 +1010,7 @@ private struct ClaudeQuotaPlot: View, Equatable {
     private func drawConnector(_ index: Int, in context: inout GraphicsContext, size: CGSize) {
         let gap = series.samples[index].timestamp.timeIntervalSince(series.samples[index - 1].timestamp)
         context.stroke(line(connectorPoints(index, size: size), smooth: false),
-                       with: .color(gap > longGap ? QuotaTrendStyle.unrecorded : QuotaSourceStyle.claudeCode),
+                       with: .color(gap > longGap ? QuotaTrendStyle.unrecorded : brand),
                        style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
     }
 
@@ -898,7 +1032,7 @@ private struct ClaudeQuotaPlot: View, Equatable {
         if points.count > 1 {
             // One continuous stroke per run, then the other-device segments
             // on top, so joints never show as dashes.
-            context.stroke(line(points, smooth: true), with: .color(QuotaSourceStyle.claudeCode),
+            context.stroke(line(points, smooth: true), with: .color(brand),
                            style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
             for i in otherDeviceSegments(run) {
                 context.stroke(segmentPath(points, i), with: .color(QuotaSourceStyle.otherDevices),
@@ -906,7 +1040,7 @@ private struct ClaudeQuotaPlot: View, Equatable {
             }
         } else if series.samples.count == 1, let only = points.first {
             context.fill(Path(ellipseIn: CGRect(x: only.x - 2, y: only.y - 2, width: 4, height: 4)),
-                         with: .color(QuotaSourceStyle.claudeCode))
+                         with: .color(brand))
         }
     }
 
@@ -916,8 +1050,8 @@ private struct ClaudeQuotaPlot: View, Equatable {
         func circle(_ diameter: CGFloat) -> Path {
             Path(ellipseIn: CGRect(x: position.x - diameter / 2, y: position.y - diameter / 2, width: diameter, height: diameter))
         }
-        context.fill(circle(16), with: .color(QuotaSourceStyle.claudeCode.opacity(0.18)))
-        context.fill(circle(7), with: .color(QuotaSourceStyle.claudeCode))
+        context.fill(circle(16), with: .color(brand.opacity(0.18)))
+        context.fill(circle(7), with: .color(brand))
         context.stroke(circle(7), with: .color(Color(nsColor: .windowBackgroundColor)), lineWidth: 1.5)
     }
 }
@@ -934,6 +1068,7 @@ struct PlotClip: Shape {
 private struct QuotaRecordedStrip: View {
     let spans: [DateInterval]
     let scale: QuotaTrendScale
+    var brand: Color = QuotaSourceStyle.claudeCode
 
     var body: some View {
         GeometryReader { geometry in
@@ -946,7 +1081,7 @@ private struct QuotaRecordedStrip: View {
                     let left = scale.x(span.start, width: width), right = scale.x(span.end, width: width)
                     Color.clear
                         .frame(width: max(3, right - left), height: 8)
-                        .overlay(Capsule().fill(QuotaSourceStyle.claudeCode).frame(height: 3))
+                        .overlay(Capsule().fill(brand).frame(height: 3))
                         .contentShape(Rectangle())
                         .position(x: (left + right) / 2, y: 4)
                         .help(Self.describe(span))
@@ -1126,10 +1261,11 @@ private struct QuotaCycleStrip: View {
 private struct QuotaTrendKey: View {
     var showsGaps = true
     var showsWeekly = false
+    var brand: Color = QuotaSourceStyle.claudeCode
 
     var body: some View {
         HStack(spacing: 14) {
-            item(QuotaSourceStyle.claudeCode, showsWeekly ? L("5 hours") : L("Recorded"))
+            item(brand, showsWeekly ? L("5 hours") : L("Recorded"))
             if showsGaps { item(QuotaTrendStyle.unrecorded, L("No readings, joined")) }
             if showsWeekly { item(QuotaTrendStyle.weekly, L("Weekly window")) }
             Spacer()

@@ -218,12 +218,22 @@ struct ProviderDashboard: Identifiable, Hashable {
     var modelUsage: [ModelUsageSummary] = []
     var hasClaudeSharedQuota = false
     var claudeQuotaHistory: [ClaudeQuotaSeries] = []
+    /// Grouped quota trend series for providers with multiple independent pools (such as Antigravity's Gemini and Claude/GPT pools).
+    var quotaTrendPools: [QuotaTrendPool] = []
     var claudeQuotaHistoryNotice: String? = nil
     /// Official per-product share of this week's usage, when available.
     var claudeProductBreakdown: ClaudeProductBreakdown? = nil
     var claudeIncludedCredit: ClaudeIncludedCredit? = nil
     /// Readings of the included credit, whose spending is cloud usage.
     var claudeCreditHistory: ClaudeCreditHistory? = nil
+
+    var effectiveQuotaTrendPools: [QuotaTrendPool] {
+        if !quotaTrendPools.isEmpty { return quotaTrendPools }
+        if !claudeQuotaHistory.isEmpty {
+            return [QuotaTrendPool(id: "claude", title: title, series: claudeQuotaHistory)]
+        }
+        return []
+    }
 
     var quotaSectionTitle: String { hasClaudeSharedQuota ? L("Subscription quota · all devices") : L("Quotas") }
     var summarySectionTitle: String { (id == "claude" || id == "antigravity") ? L("Local usage") : L("Summary") }

@@ -123,5 +123,9 @@ extension L10nTable {
         "5-hour windows · %d used up": "5 小时窗口 · 用满 %d 个",
         "Active hours": "活跃时段",
         "No use recorded on this day.": "这一天没有用量记录。",
+        "Gemini": "Gemini",
+        "Claude/GPT": "Claude/GPT",
+        "Quota pool": "额度池",
+        "Sampled from Antigravity quota readings on this Mac across Gemini and Claude/GPT pools.": "根据本机记录的 Antigravity 额度读数绘制，按 Gemini 与 Claude/GPT 额度池分别统计。",
     ]
 }

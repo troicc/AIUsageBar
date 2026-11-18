@@ -1,0 +1,241 @@
+diff --git a/Sources/CodexBarCore/Providers/Antigravity/AntigravityProviderDescriptor.swift b/Sources/CodexBarCore/Providers/Antigravity/AntigravityProviderDescriptor.swift
+index db210b6..7ca2b2e 100644
+--- a/Sources/CodexBarCore/Providers/Antigravity/AntigravityProviderDescriptor.swift
++++ b/Sources/CodexBarCore/Providers/Antigravity/AntigravityProviderDescriptor.swift
+@@ -363,6 +363,14 @@ struct AntigravityCLIHTTPSFetchStrategy: ProviderFetchStrategy {
+         guard let binary = BinaryLocator.resolveAntigravityBinary(env: context.env) else {
+             throw AntigravityStatusProbeError.notRunning
+         }
++        // agy 1.2.2+ local servers reject token-less requests (401 "missing CSRF token"), so spawning
++        // and polling them can never succeed. Read the CLI's own print-mode usage report instead.
++        // Unknown versions keep the legacy spawn so older or unusual builds are unaffected.
++        if let version = await Self.agyVersion(binary: binary, environment: context.env),
++           version >= Self.firstCSRFGatedVersion
++        {
++            return try await self.fetchPrintUsage(binary: binary, context: context)
++        }
+         let expectedAccountEmail: String? = if context.sourceMode == .auto,
+                                                context.selectedTokenAccountID != nil
+         {
+@@ -379,6 +387,140 @@ struct AntigravityCLIHTTPSFetchStrategy: ProviderFetchStrategy {
+         return result
+     }
+ 
++    /// First `agy` release whose local server requires a CSRF token that CodexBar cannot obtain.
++    static let firstCSRFGatedVersion: (UInt, UInt, UInt) = (1, 2, 2)
++
++    /// Parses `agy --version`; anything but a plain `major.minor.patch` is unknown.
++    static func parseVersion(_ output: String) -> (UInt, UInt, UInt)? {
++        let version = output.trimmingCharacters(in: .whitespacesAndNewlines)
++        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
++        guard parts.count == 3 else { return nil }
++        let numbers = parts.compactMap { part -> UInt? in
++            guard !part.isEmpty, part.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
++            return UInt(part)
++        }
++        guard numbers.count == 3 else { return nil }
++        return (numbers[0], numbers[1], numbers[2])
++    }
++
++    /// Failures are treated as an unknown version so the legacy path still runs.
++    static func agyVersion(binary: String, environment: [String: String]) async -> (UInt, UInt, UInt)? {
++        guard let result = try? await SubprocessRunner.run(
++            binary: binary,
++            arguments: ["--version"],
++            environment: Self.childEnvironment(environment),
++            timeout: 5,
++            maxOutputBytes: 4096,
++            standardInput: FileHandle.nullDevice,
++            label: "antigravity-cli-version")
++        else { return nil }
++        return Self.parseVersion(result.stdout)
++    }
++
++    static func childEnvironment(_ environment: [String: String]) -> [String: String] {
++        var environment = TTYCommandRunner.enrichedEnvironment(baseEnv: environment)
++        environment.removeValue(forKey: AntigravityOAuthCredentialsStore.environmentCredentialsKey)
++        environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true" // agy ignores "1".
++        return environment
++    }
++
++    private func fetchPrintUsage(binary: String, context: ProviderFetchContext) async throws -> ProviderFetchResult {
++        // The print report carries no account identity, so it must not stand in for a selected or
++        // injected OAuth account; throwing lets the pipeline fall through to the account-scoped fetch.
++        if context.sourceMode == .auto,
++           context.selectedTokenAccountID != nil ||
++           context.env[AntigravityOAuthCredentialsStore.environmentCredentialsKey] != nil
++        {
++            throw AntigravityStatusProbeError.apiError("agy usage report cannot verify the selected account")
++        }
++        let snapshot = try await Self.runPrintUsage(binary: binary, environment: context.env)
++        let usage = try snapshot.toUsageSnapshot()
++        return self.makeResult(usage: usage, sourceLabel: Self.sourceLabel)
++    }
++
++    /// Runs `agy -p /usage --output-format json` in a private empty directory. agy's OAuth launcher
++    /// resolves `open`/`xdg-open` through PATH even in print mode, so failing stubs keep a passive
++    /// usage probe from ever opening a browser sign-in.
++    static func runPrintUsage(
++        binary: String,
++        environment: [String: String],
++        timeout: TimeInterval = 60) async throws -> AntigravityStatusSnapshot
++    {
++        try Task.checkCancellation()
++        let fileManager = FileManager.default
++        let directory = fileManager.temporaryDirectory
++            .appendingPathComponent("codexbar-agy-usage-" + UUID().uuidString, isDirectory: true)
++        try fileManager.createDirectory(
++            at: directory,
++            withIntermediateDirectories: false,
++            attributes: [.posixPermissions: 0o700])
++        defer { try? fileManager.removeItem(at: directory) }
++
++        var environment = Self.childEnvironment(environment)
++        for command in ["open", "xdg-open"] {
++            guard fileManager.createFile(
++                atPath: directory.appendingPathComponent(command).path,
++                contents: Data("#!/bin/sh\nexit 1\n".utf8),
++                attributes: [.posixPermissions: 0o700])
++            else {
++                throw AntigravityStatusProbeError.apiError("could not prepare the agy usage probe")
++            }
++        }
++        environment["PATH"] = directory.path + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
++        environment["BROWSER"] = directory.appendingPathComponent("open").path
++
++        let result: SubprocessResult
++        do {
++            result = try await SubprocessRunner.run(
++                binary: binary,
++                arguments: [
++                    "-p", "/usage",
++                    "--output-format", "json",
++                    "--print-timeout", "\(Int(max(5, timeout - 5)))s",
++                ],
++                environment: environment,
++                timeout: timeout,
++                maxOutputBytes: 1_048_576,
++                standardInput: FileHandle.nullDevice,
++                currentDirectoryURL: directory,
++                label: "antigravity-cli-usage")
++        } catch let error as SubprocessRunnerError {
++            try Task.checkCancellation()
++            throw Self.printUsageError(for: error)
++        }
++        try Task.checkCancellation()
++        return try AntigravityStatusProbe.parseCLIUsageReport(Data(result.stdout.utf8))
++    }
++
++    /// Raw agy stderr can contain account-identifying URLs, proxy details, or local paths, so every
++    /// failure maps to a fixed message.
++    static func printUsageError(for error: SubprocessRunnerError) -> AntigravityStatusProbeError {
++        switch error {
++        case .timedOut:
++            return .timedOut
++        case let .nonZeroExit(code, stderr):
++            let text = stderr.lowercased()
++            if Self.containsAuthenticationPrompt(Data(stderr.utf8)) ||
++                Self.printSignInMarkers.contains(where: { text.contains($0) })
++            {
++                return .authenticationRequired
++            }
++            return .apiError("agy usage report exited \(code)")
++        case .binaryNotFound:
++            return .notRunning
++        case .launchFailed:
++            return .apiError("agy failed to launch")
++        case .outputTooLarge:
++            return .parseFailed("CLI usage report too large")
++        }
++    }
++
++    private static let printSignInMarkers = [
++        "not logged in",
++        "not signed in",
++        "authentication required",
++    ]
++
+     private func fetchUsingWarmSession(
+         binary: String,
+         idleWindow: TimeInterval?,
+diff --git a/Sources/CodexBarCore/Providers/Antigravity/AntigravityQuotaSummaryParser.swift b/Sources/CodexBarCore/Providers/Antigravity/AntigravityQuotaSummaryParser.swift
+index 9928f76..f807b6b 100644
+--- a/Sources/CodexBarCore/Providers/Antigravity/AntigravityQuotaSummaryParser.swift
++++ b/Sources/CodexBarCore/Providers/Antigravity/AntigravityQuotaSummaryParser.swift
+@@ -63,8 +63,30 @@ extension AntigravityStatusProbe {
+             source: .local)
+     }
+ 
++    /// Parses `agy -p /usage --output-format json`. agy 1.2.2+ rejects token-less local server requests,
++    /// so this print report is the only local CLI source CodexBar can read on current releases.
++    static func parseCLIUsageReport(_ data: Data) throws -> AntigravityStatusSnapshot {
++        let decoder = JSONDecoder()
++        decoder.keyDecodingStrategy = .convertFromSnakeCase
++        let report = try decoder.decode(QuotaSummaryCLIReport.self, from: data)
++        guard report.status == "SUCCESS", report.command?.name == "usage", let payload = report.command?.data else {
++            throw AntigravityStatusProbeError.parseFailed("Unsuccessful CLI usage report")
++        }
++        let groups = payload.groups.compactMap(self.quotaSummaryGroup(from:))
++        guard groups.contains(where: { group in group.buckets.contains { $0.remainingFraction != nil } }) else {
++            throw AntigravityStatusProbeError.parseFailed("CLI usage report has no known quota")
++        }
++        return AntigravityStatusSnapshot(
++            quotaSummary: AntigravityQuotaSummary(
++                description: payload.description,
++                groups: groups),
++            accountEmail: nil,
++            accountPlan: nil,
++            source: .local)
++    }
++
+     private static func quotaSummaryGroup(from payload: QuotaSummaryGroupPayload) -> AntigravityQuotaSummaryGroup? {
+-        let displayName = payload.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
++        let displayName = (payload.displayName ?? payload.name)?.trimmingCharacters(in: .whitespacesAndNewlines)
+         let buckets = (payload.buckets ?? []).compactMap(self.quotaSummaryBucket(from:))
+         guard !buckets.isEmpty else { return nil }
+         return AntigravityQuotaSummaryGroup(
+@@ -74,8 +96,8 @@ extension AntigravityStatusProbe {
+     }
+ 
+     private static func quotaSummaryBucket(from payload: QuotaSummaryBucketPayload) -> AntigravityQuotaSummaryBucket? {
+-        let bucketId = payload.bucketId?.trimmingCharacters(in: .whitespacesAndNewlines)
+-        let displayName = payload.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
++        let bucketId = (payload.bucketId ?? payload.id)?.trimmingCharacters(in: .whitespacesAndNewlines)
++        let displayName = (payload.displayName ?? payload.name)?.trimmingCharacters(in: .whitespacesAndNewlines)
+         guard let resolvedBucketId = bucketId, !resolvedBucketId.isEmpty else { return nil }
+         let resetTime = payload.resetTime.flatMap { Self.parseDate($0) }
+         return AntigravityQuotaSummaryBucket(
+@@ -93,6 +115,16 @@ extension AntigravityStatusProbe {
+     }
+ }
+ 
++private struct QuotaSummaryCLIReport: Decodable {
++    let status: String?
++    let command: Command?
++
++    struct Command: Decodable {
++        let name: String?
++        let data: QuotaSummaryPayload?
++    }
++}
++
+ private struct QuotaSummaryResponse: Decodable {
+     let code: CodeValue?
+     let message: String?
+@@ -130,13 +162,16 @@ private struct QuotaSummaryPayload: Decodable {
+ 
+ private struct QuotaSummaryGroupPayload: Decodable {
+     let displayName: String?
++    let name: String?
+     let description: String?
+     let buckets: [QuotaSummaryBucketPayload]?
+ }
+ 
+ private struct QuotaSummaryBucketPayload: Decodable {
+     let bucketId: String?
++    let id: String?
+     let displayName: String?
++    let name: String?
+     let description: String?
+     let disabled: Bool?
+     let remainingFraction: Double?

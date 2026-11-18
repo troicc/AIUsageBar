@@ -354,6 +354,7 @@ def main() -> None:
     apply_optional_patch(codexbar, patch_dir / "EngineLiveUsage.patch")
     apply_optional_patch(codexbar, patch_dir / "EngineFinanceProviders.patch")
     apply_optional_patch(codexbar, patch_dir / "EngineClaudeWorkspaceTrust.patch")
+    apply_optional_patch(codexbar, patch_dir / "EngineAntigravityPrintUsage.patch")
     apply_optional_patch(sweet, patch_dir / "SweetCookieKit.patch")
     apply_optional_patch(commander, patch_dir / "Commander.patch")
 

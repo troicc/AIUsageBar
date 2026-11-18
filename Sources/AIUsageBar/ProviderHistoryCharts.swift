@@ -121,9 +121,15 @@ struct ProviderHistorySeriesView: View {
                 }
             }
             HStack {
-                Text(series.firstLabel)
-                Spacer()
-                Text(series.lastLabel)
+                if series.values.count == 1 {
+                    Spacer()
+                    Text(series.lastLabel)
+                    Spacer()
+                } else {
+                    Text(series.firstLabel)
+                    Spacer()
+                    Text(series.lastLabel)
+                }
             }
             .font(.system(size: 10))
             .foregroundColor(.secondary)
@@ -171,8 +177,9 @@ struct ProviderHistoryBarChart: View {
                                      color.opacity(index == lastIndex ? 1 : 0.7)],
                             startPoint: .bottom, endPoint: .top))
                         .opacity(value == nil ? 0 : 1)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: 28)
                         .frame(height: (value ?? 0) > 0 ? max(3, geometry.size.height * CGFloat(value! / maximum)) : 0)
+                        .frame(maxWidth: .infinity, alignment: .bottom)
                 }
             }
         }
@@ -229,7 +236,7 @@ func dashboardHistorySeries(for dashboard: ProviderDashboard) -> [ProviderHistor
             color: providerColor)
         append(
             id: "daily-cost",
-            title: L((dashboard.id == "claude" || dashboard.id == "codex") ? "Daily estimated cost" : "Daily cost"),
+            title: L((dashboard.id == "claude" || dashboard.id == "codex" || dashboard.id == "antigravity") ? "Daily estimated cost" : "Daily cost"),
             values: spend,
             style: .line,
             kind: .spend,

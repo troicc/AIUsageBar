@@ -226,11 +226,11 @@ struct ProviderDashboard: Identifiable, Hashable {
     var claudeCreditHistory: ClaudeCreditHistory? = nil
 
     var quotaSectionTitle: String { hasClaudeSharedQuota ? L("Subscription quota · all devices") : L("Quotas") }
-    var summarySectionTitle: String { id == "claude" ? L("Local usage") : L("Summary") }
-    var historySectionTitle: String { id == "claude" ? L("Local usage history") : L("History") }
+    var summarySectionTitle: String { (id == "claude" || id == "antigravity") ? L("Local usage") : L("Summary") }
+    var historySectionTitle: String { (id == "claude" || id == "antigravity") ? L("Local usage history") : L("History") }
 
     var showsTopModels: Bool {
-        topModel10Days != nil || topModelToday != nil || ["claude", "codex", "zai"].contains(id)
+        topModel10Days != nil || topModelToday != nil || ["claude", "codex", "zai", "antigravity"].contains(id)
     }
 
     static func loading(providerID: String, title: String) -> ProviderDashboard {

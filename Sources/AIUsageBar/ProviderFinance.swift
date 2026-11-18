@@ -21,7 +21,7 @@ struct ProviderFinanceProfile: Hashable {
             return ProviderFinanceProfile(
                 trackingMode: .quotaOnly,
                 supportsBalanceBreakdown: false)
-        case "codex", "claude":
+        case "codex", "claude", "antigravity":
             return ProviderFinanceProfile(
                 trackingMode: .officialHistory,
                 supportsBalanceBreakdown: false)

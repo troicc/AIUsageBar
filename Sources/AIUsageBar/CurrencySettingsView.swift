@@ -4,6 +4,7 @@ struct CurrencySettingsView: View {
     @ObservedObject var currency: CurrencySettingsStore = .shared
     @AppStorage("subscriptionDefaultUSD.codex") private var codexFee = ""
     @AppStorage("subscriptionDefaultUSD.claude") private var claudeFee = ""
+    @AppStorage("subscriptionDefaultUSD.antigravity") private var antigravityFee = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -59,6 +60,8 @@ struct CurrencySettingsView: View {
                 subscriptionField("Codex", providerID: "codex", value: $codexFee)
                 SettingsRowDivider(inset: 50)
                 subscriptionField("Claude", providerID: "claude", value: $claudeFee)
+                SettingsRowDivider(inset: 50)
+                subscriptionField("Antigravity", providerID: "antigravity", value: $antigravityFee)
             }
         }
     }

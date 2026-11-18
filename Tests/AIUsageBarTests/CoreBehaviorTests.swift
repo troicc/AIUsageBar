@@ -459,6 +459,43 @@ final class CoreBehaviorTests: XCTestCase {
         }
     }
 
+    func testAntigravityPricingAndTokenOnlyDashboardBehavior() throws {
+        XCTAssertNil(AntigravityBuiltInPricing.costUSD(
+            model: "gemini-4-carbon",
+            date: Date(),
+            inputTokens: 1000,
+            cacheReadTokens: 500,
+            cacheWriteTokens: 0,
+            outputTokens: 200))
+        let gptOss = try XCTUnwrap(AntigravityBuiltInPricing.costUSD(
+            model: "gpt-oss-120b-medium",
+            date: Date(),
+            inputTokens: 100,
+            cacheReadTokens: 50,
+            cacheWriteTokens: 0,
+            outputTokens: 37))
+        XCTAssertEqual(gptOss, 100 * 0.09e-6 + 50 * 0.09e-6 + 37 * 0.36e-6, accuracy: 1e-12)
+        let claude = try XCTUnwrap(AntigravityBuiltInPricing.costUSD(
+            model: "claude-opus-4-6-thinking",
+            date: Date(),
+            inputTokens: 1000,
+            cacheReadTokens: 2000,
+            cacheWriteTokens: 0,
+            outputTokens: 400))
+        XCTAssertEqual(claude, 0.016, accuracy: 1e-12)
+
+        let json = """
+        {"provider":"antigravity","source":"local","daily":[
+          {"date":"2026-11-16","totalTokens":4000,"modelBreakdowns":[{"modelName":"gemini-4-carbon","totalTokens":4000}]},
+          {"date":"2026-11-18","totalTokens":1000,"modelBreakdowns":[{"modelName":"gemini-4-carbon","totalTokens":1000}]}
+        ]}
+        """
+        let snapshot = try XCTUnwrap(CLIClient.decodeSnapshots("{\"provider\":\"antigravity\"}").first)
+        let dashboard = DashboardParser.dashboard(snapshot: snapshot, supplementalJSON: json)
+        XCTAssertEqual(dashboard.history.map(\.tokens), [4000, 0, 1000])
+        XCTAssertTrue(dashboard.history.allSatisfy { $0.spend == nil })
+    }
+
     private func number(_ payload: [String: Any], _ key: String) -> Double {
         (payload[key] as? NSNumber)?.doubleValue ?? .nan
     }

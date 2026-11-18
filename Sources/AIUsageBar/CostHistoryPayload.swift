@@ -16,6 +16,7 @@ struct CostHistoryPayload: Codable, Hashable {
     let last30DaysCostUSD: Double?
     let daily: [CostHistoryDay]?
     let totals: CostHistoryTotals?
+    var scanIsPartial: Bool? = nil
 
     var resolvedLast30DaysTokens: Double? {
         positiveOrZero(last30DaysTokens) ??

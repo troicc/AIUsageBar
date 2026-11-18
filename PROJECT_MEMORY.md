@@ -2,6 +2,30 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-18 Antigravity 本地对话库 Token 与费用估算（App 内实现，已安装，已提交到 main 并推送）
+
+- 背景：`v0.46.0` 引擎的 `cost` 命令只支持 Claude、Codex、Cursor；用户选择在 App 侧直接参照上游 `CodexBar`（`v0.84.0`）读取本机 Antigravity 对话库，并接入现有本地用量、用量价值、每日图表和长期账本。
+- 本地读取（`AntigravityProtoReader.swift`、`AntigravityLocalUsage.swift`、`ProviderConfigStore.swift`）：
+  - 只读扫描 `~/.gemini/antigravity/*.db`、`~/.gemini/antigravity/conversations/*.db`、`~/.gemini/antigravity-cli/conversations/*.db`、`GEMINI_CLI_HOME` 及 `config.json` 中 `antigravityAdditionalProfileHomes`；完全没有 `.db` 时才回退到 `~/.config/tokscale/antigravity-cache/sessions/*.jsonl`。
+  - 严格 `SQLITE_OPEN_READONLY` + `BEGIN DEFERRED`，先查 `sqlite_master` 与 `PRAGMA main.table_xinfo` 跳过无关库（如 `conversation_summaries.db`）；无 `-wal` 且 header 静止时支持 `immutable=1` 只读回退；绝不读取 `steps.step_payload` 对话正文。
+  - `agy 1.2+`（本机 1.5.10）的 `gen_metadata.data` 不再内嵌 `chatModel.#9.#4` 时间戳，通过根字段 `#4`（`stepUUID`）和 `usage.#7`（`botID`）关联 `steps.metadata`（`#1` 时间戳、`#9.#7`、`#12`）恢复精确时间。按 `(session, row)` 与同会话 `(session, responseID)` 去重；遇到冲突或读取不稳定时直接扣留结果，不展示残缺数字。
+- 定价与展示（`AntigravityBuiltInPricing`、`DashboardParser.swift`、`ProviderUsageValueView.swift`、`ProviderHistoryCharts.swift`）：
+  - 内置有公开 API 定价的模型费率：Claude 全系（含 >200K 分档与 `-thinking`/`-low` 别名）、Vertex MaaS `gpt-oss-120b-medium`（`$0.09/$0.36`/M）、OpenAI GPT 系列、Gemini 2.5 与 3.x 系列；`output + reasoning` 合并计入 `outputTokens` 以同时对齐输出计费与 `LocalTokenHistoryStore` 的分类占比和。
+  - Gemini 4 系列（如 `gemini-4-carbon`、`gemini-4-argon`）等无公开价格模型只显示真实 Token 数，不编造美元费用：有已定价模型时显示完整的“本地用量价值 · 30 天 / 本计费周期”（含月费倍数与模型折叠列表），全部为未定价模型时改为简洁的“本地模型 · 30 天 / 本计费周期”（显示各模型 Token 与“暂无公开价格”），每日费用折线图在全无已知费用或部分扫描（`scanIsPartial`）时不补 `$0.00`。
+  - `ProviderHistoryBarChart` 单柱最大宽度限制为 28pt，仅 1 天数据时横轴居中显示单个日期标签，避免首日用量的柱状图铺满整行并重复显示同一天。
+  - 设置 → 通用 新增 Antigravity 默认月订阅费输入项；`DashboardStore` 刷新后（单账号时）自动写入 `LocalTokenHistoryStore` 长期账本与导出。
+- 验证：先对用户本机 6 个真实 `.db` 只读验证通过（`coverage: complete`，解出 `gemini-4-carbon` 当日输入/输出/缓存读取 Token，句柄开闭平衡 6/6）。新增 `Scripts/antigravity_local_usage_regression.swift`（接入 `test_cost_history_parser.sh` 和 `test_ui_contract.py`）与 `CoreBehaviorTests` 用例。UI/release/smoke/Monterey patcher/provider auth/catalog contract、全套回归、双架构 Swift 5.6 typecheck、visual model attribution 5 项、`git diff --check` 全部通过；实机画廊与中英浅/深状态图均已人工检查。`build_local_validation.sh`（Universal 2、macOS 12、65-provider offline smoke、UI smoke）通过，已安装 build 202611181319，旧版备份 `/private/tmp/aiusagebar-install-backup.tzGdHl/AIUsageBar.app`。
+
+## 2026-11-18 Antigravity 额度检测不到：agy 1.2.2+ 本地服务要 CSRF 令牌（已修并安装，已合并到 main 并推送）
+
+- 现象：用户只装了 `agy` CLI（1.5.10，`~/.local/bin/agy`，没有 Antigravity App/IDE），刷新日志一直是 `Antigravity language server not detected`。这句是 auto 模式最后一个策略（IDE 探测）的报错，把真正的失败盖住了。
+- 根因：v0.46.0 引擎的 CLI 路径会启动 `agy`，然后不带令牌请求它的本地 HTTPS 服务；agy 1.2.2 起这个服务回 `401 unauthenticated: missing CSRF token`（引擎显示为 “session expired”）。agy 本身登录正常（钥匙串令牌）。上游 CodexBar 已确认同一点（`firstCSRFGatedVersion = 1.2.2`），改用 `agy -p /usage --output-format json`。
+- 修复：`Patches/EngineAntigravityPrintUsage.patch`（已登记到 `patch_upstream.py`）。CLI 策略先跑 `agy --version`（约 0.1 s），≥ 1.2.2 就在 0700 临时空目录里跑一次性报告：屏蔽 `open`/`xdg-open`/`BROWSER`，不会弹浏览器登录；设 `AGY_CLI_DISABLE_AUTO_UPDATE=true`；去掉 OAuth 凭据变量；超时 60 s；stderr 不外露，只给固定的报错文案。版本未知或更旧的照旧走原来的启动路径。报告不带账号身份，所以 auto 模式下选了 token 账号或注入了 OAuth 凭据时不用它，直接抛错，让流程落到 OAuth。解析器新增 `parseCLIUsageReport`，并兼容报告里的 `name`/`id` 字段（snake_case）。
+- 验证：补丁 `git apply --check` 在原始 v0.46.0 上、以及叠在其他三个引擎补丁之后都通过；Monterey API 扫描、patcher/release/smoke contract 通过；用 Swift 5.6 写了与补丁结构相同的解析小程序，喂真实 agy 输出，4 个窗口（Gemini / Claude and GPT × 周 / 5 小时）都正确，版本判断也正确。提交 34fc36d 只包含补丁和 `patch_upstream.py` 的登记，推到 `origin/fix/antigravity-agy-print-usage`，用 workflow_dispatch 在 CI 上构建（run 44225367824 成功，日志确认补丁已打上）。用干净环境（`env -i`）跑 CI 引擎：source=cli，8.5 s 拿到 4 个窗口，没有残留 agy 进程和临时目录。用该 artifact 作模板跑 `build_local_validation.sh`（UI smoke `PASS | snapshots=3 overviewItems=13`），然后安装 build 202611181057，旧版备份 `/private/tmp/aiusagebar-install-backup.bTPX4s/AIUsageBar.app`。按 App 的调用方式（`CODEXBAR_CONFIG` + `--format json --json-only --status`）实测：antigravity source=cli、无报错，Claude、DeepSeek 正常。helper 的哈希与 CI 产物不同，原因是本地打包时 `codesign --force` 重签；二进制里有新代码的标记字符串。
+- 详情重复行（同日，已提交）：引擎把 Gemini 5-hour 作为 primary、Claude/GPT 5-hour 作为 secondary，又在 extraRateWindows 里给出 4 个分组窗口，详情和菜单因此多出两行没写分组的“5 小时”。`DashboardParser.dropGenericDuplicates` 只对 antigravity 生效：通用窗口与某个 scoped 窗口相同（窗口长度相差 <1 分钟、重置时间相差 <60 s、已用相差 <0.5）时去掉通用行。四个分组标题加了中文（“Gemini · 5 小时”等）。画廊中文浅/深色都看过；UI contract、回归、provider auth、`git diff --check` 通过；已安装 build 202611181211，旧版备份 `/private/tmp/aiusagebar-install-backup.kdZ3of/AIUsageBar.app`。“余量 N%”是原有的节奏提示，表示比匀速消耗少用了 N%，不是剩余额度。
+- 注意：Gemini 的剩余比例在几次连续读取中来回变（0.990 ↔ 0.9996），直接跑 agy 也一样，是 Google 那边返回的数据，不是换算错误。诊断日志的错误计数只在内存里，App 重启后刷新成功不会写“恢复”行，判断有没有修好不能看这个日志。
+- 排查时注意：不要去读 agy 的 discovery 文件或令牌（权限规则会拦）；上游的做法也不需要令牌。
+
 ## 2026-11-17 菜单里点服务商行有时打不开详情（已修并安装 build 202611171109，未经点击实测）
 
 - 现象：点一下服务商行有时没反应，双击才弹出，之后还要再点一下才响应。11-16 起服务商行改为自定义 `MenuActionRowView`（58f86da）后出现。

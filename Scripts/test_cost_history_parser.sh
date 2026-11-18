@@ -119,3 +119,26 @@ swiftc -module-cache-path "$MODULE_CACHE" \
   "$TMP/main.swift" \
   -o "$TMP/system-proxy-environment-regression"
 "$TMP/system-proxy-environment-regression"
+
+cp "$ROOT/Scripts/antigravity_local_usage_regression.swift" "$TMP/main.swift"
+swiftc -module-cache-path "$MODULE_CACHE" \
+  "$ROOT/Sources/AIUsageBar/Models.swift" \
+  "$ROOT/Sources/AIUsageBar/Formatting.swift" \
+  "$ROOT/Sources/AIUsageBar/JSONHelpers.swift" \
+  "$ROOT"/Sources/AIUsageBar/L10n*.swift \
+  "$ROOT/Sources/AIUsageBar/CostHistoryPayload.swift" \
+  "$ROOT/Sources/AIUsageBar/CurrencyDisplay.swift" \
+  "$ROOT/Sources/AIUsageBar/ProviderFinance.swift" \
+  "$ROOT/Sources/AIUsageBar/ClaudeQuotaHistory.swift" \
+  "$ROOT/Sources/AIUsageBar/ClaudeQuotaInsights.swift" \
+  "$ROOT/Sources/AIUsageBar/ClaudeAccountUsage.swift" \
+  "$ROOT/Sources/AIUsageBar/ClaudeCloudCredit.swift" \
+  "$ROOT/Sources/AIUsageBar/SubscriptionTiming.swift" \
+  "$ROOT/Sources/AIUsageBar/DashboardModels.swift" \
+  "$ROOT/Sources/AIUsageBar/DashboardParser.swift" \
+  "$ROOT/Sources/AIUsageBar/LocalTokenHistoryStore.swift" \
+  "$ROOT/Sources/AIUsageBar/AntigravityProtoReader.swift" \
+  "$ROOT/Sources/AIUsageBar/AntigravityLocalUsage.swift" \
+  "$TMP/main.swift" \
+  -o "$TMP/antigravity-local-usage-regression"
+"$TMP/antigravity-local-usage-regression"

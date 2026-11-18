@@ -96,6 +96,13 @@ actor CLIClient {
     /// Some providers expose their history in the usage payload, while local
     /// Codex/Claude scans expose it through `cost`; both are accepted here.
     func dashboardSupplementJSON(provider: String) async -> String? {
+        if provider == "antigravity" {
+            let environment = Self.loginEnvironment()
+            let homes = configStore.antigravityAdditionalProfileHomes()
+            return AntigravityLocalUsage.supplementJSON(
+                environment: environment,
+                additionalProfileHomes: homes)
+        }
         // The enabled-provider fetch already supplies the complete raw usage JSON.
         // Only Codex and Claude require the separate local cost-history payload.
         // Combining another usage payload with cost JSON made generic field

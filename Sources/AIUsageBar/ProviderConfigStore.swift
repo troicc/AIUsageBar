@@ -234,6 +234,16 @@ final class ProviderConfigStore {
         }
     }
 
+    func antigravityAdditionalProfileHomes() -> [String] {
+        guard let url = try? resolvedConfigURL(),
+              let root = try? readRoot(from: url),
+              let providers = root["providers"] as? [[String: Any]],
+              let provider = providers.first(where: { ($0["id"] as? String) == "antigravity" }),
+              let homes = provider["antigravityAdditionalProfileHomes"] as? [String]
+        else { return [] }
+        return homes
+    }
+
     func activateTokenAccount(providerID: String, accountID: String) throws {
         try updateTokenAccounts(providerID: providerID) { container, accounts in
             guard let index = accounts.enumerated().first(where: {

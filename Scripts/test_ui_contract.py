@@ -178,6 +178,8 @@ assert "quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel" in menu
 assert "quota_trend_store_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert "local_spend_history_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
 assert "token_history_store_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
+assert "antigravity_local_usage_regression.swift" in (ROOT / "Scripts" / "test_cost_history_parser.sh").read_text()
+assert 'AntigravityLocalUsage.supplementJSON' in client
 assert "maximumAttributableInterval" in local_spend
 assert "unattributedIntervals" in local_spend
 assert "calendar.isDate(previous.timestamp, inSameDayAs: next.timestamp)" in local_spend

@@ -70,9 +70,13 @@ struct ProviderUsageValueCard: View {
     }
 
     private var title: String {
-        let local = dashboard.id == "claude" && cloud == nil
+        let local = (dashboard.id == "claude" && cloud == nil) || dashboard.id == "antigravity"
         guard cycle != nil else { return L(local ? "Local usage value · 30d" : "Usage value · 30d") }
         return L(local ? "Local usage value · this billing cycle" : "Usage value · this billing cycle")
+    }
+
+    private var tokenOnlyAntigravity: Bool {
+        dashboard.id == "antigravity" && total?.knownCost == nil
     }
 
     private var cycleText: String? {
@@ -81,36 +85,54 @@ struct ProviderUsageValueCard: View {
         return L("Since %@ · resets with the subscription", cycle.start.formatted(style))
     }
 
+    @ViewBuilder
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // The method note sits behind the ⓘ, like the other sections.
-            ProviderDetailSectionTitle(title: title, info: L(cloud != nil
-                ? "Local Claude Code logs plus the included cloud credit spent, from its balance at each refresh; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill."
-                : dashboard.id == "claude"
-                ? "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account."
-                : "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account."))
-            if let cycleText = cycleText {
-                Text(cycleText).font(.system(size: 10)).foregroundColor(.secondary)
+        if tokenOnlyAntigravity {
+            if !models.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    ProviderDetailSectionTitle(
+                        title: cycle != nil ? L("Local models · this billing cycle") : L("Local models · 30d"),
+                        info: L("Local Antigravity conversation history only; web and other devices are excluded. Models without public API prices show token counts only."))
+                    if let cycleText = cycleText {
+                        Text(cycleText).font(.system(size: 10)).foregroundColor(.secondary)
+                    }
+                    modelRows
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            comparison
-            subscriptionEditor
-            if total?.isPartial == true {
-                Text(L("Partial estimate · known costs only"))
-                    .font(.system(size: 10)).foregroundColor(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                // The method note sits behind the ⓘ, like the other sections.
+                ProviderDetailSectionTitle(title: title, info: L(cloud != nil
+                    ? "Local Claude Code logs plus the included cloud credit spent, from its balance at each refresh; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill."
+                    : dashboard.id == "claude"
+                    ? "Local Claude Code logs only; web chats are excluded. API equivalent ÷ monthly fee, not total subscription value or a bill. Logs cannot verify the billing account."
+                    : dashboard.id == "antigravity"
+                    ? "Local Antigravity conversation history only; web and other devices are excluded. API equivalent ÷ monthly fee, not a Google charge or quota."
+                    : "API equivalent from local logs ÷ monthly fee. Not a bill or quota; logs cannot verify the billing account."))
+                if let cycleText = cycleText {
+                    Text(cycleText).font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                comparison
+                subscriptionEditor
+                if total?.isPartial == true {
+                    Text(L("Partial estimate · known costs only"))
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                if currency.selection == .cny {
+                    Text(currency.quote.map { L("USD/CNY %@ · %@ · reference rate", String(format: "%.4f", $0.rate), $0.date) }
+                        ?? L("Exchange rate unavailable · showing USD"))
+                        .font(.system(size: 9)).foregroundColor(.secondary)
+                }
+                DisclosureGroup(isExpanded: $modelsExpanded) {
+                    modelRows.padding(.top, 8)
+                } label: {
+                    Text(cycle != nil ? L("Models · this cycle (%d)", models.count) : L("Models · 30d (%d)", models.count))
+                        .font(.system(size: 11, weight: .medium))
+                }
             }
-            if currency.selection == .cny {
-                Text(currency.quote.map { L("USD/CNY %@ · %@ · reference rate", String(format: "%.4f", $0.rate), $0.date) }
-                    ?? L("Exchange rate unavailable · showing USD"))
-                    .font(.system(size: 9)).foregroundColor(.secondary)
-            }
-            DisclosureGroup(isExpanded: $modelsExpanded) {
-                modelRows.padding(.top, 8)
-            } label: {
-                Text(cycle != nil ? L("Models · this cycle (%d)", models.count) : L("Models · 30d (%d)", models.count))
-                    .font(.system(size: 11, weight: .medium))
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var comparison: some View {
@@ -195,9 +217,14 @@ struct ProviderUsageValueCard: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(models) { row in
-                    ModelUsageValueRow(row: row, display: currency.display)
+                    ModelUsageValueRow(
+                        row: row,
+                        display: currency.display,
+                        showsNoPublicPrice: dashboard.id == "antigravity")
                 }
-                Text(L("Total tokens include cached tokens when reported. Costs use the prices available in local usage data."))
+                Text(L(tokenOnlyAntigravity
+                    ? "Total tokens include cached and thinking tokens when reported."
+                    : "Total tokens include cached tokens when reported. Costs use the prices available in local usage data."))
                     .font(.system(size: 9)).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -208,6 +235,7 @@ struct ProviderUsageValueCard: View {
 private struct ModelUsageValueRow: View {
     let row: ModelUsageSummary
     let display: CurrencyDisplay
+    var showsNoPublicPrice = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -219,11 +247,16 @@ private struct ModelUsageValueRow: View {
                     .font(.system(size: 10)).foregroundColor(.secondary)
                     .help(row.tokens.map { L("%.0f total tokens", $0) } ?? L("Tokens unavailable"))
                 Spacer(minLength: 8)
-                Text(usageCostText(row.cost, display: display))
-                    .font(.system(size: 11, weight: .medium)).monospacedDigit()
-                    .fixedSize()
-                    .help(row.cost.knownCost.map { String(format: "%.6f USD", $0)
-                        + " · " + L(row.cost.isPartial ? "partial estimate" : "API equivalent") } ?? L("No price available"))
+                if showsNoPublicPrice && row.cost.knownCost == nil {
+                    Text(L("No public price"))
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                } else {
+                    Text(usageCostText(row.cost, display: display))
+                        .font(.system(size: 11, weight: .medium)).monospacedDigit()
+                        .fixedSize()
+                        .help(row.cost.knownCost.map { String(format: "%.6f USD", $0)
+                            + " · " + L(row.cost.isPartial ? "partial estimate" : "API equivalent") } ?? L("No price available"))
+                }
             }
         }
     }

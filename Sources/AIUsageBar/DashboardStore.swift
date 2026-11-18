@@ -180,7 +180,7 @@ final class DashboardStore: ObservableObject {
             // scans run concurrently and outside the refresh, so "Refreshing…"
             // ends as soon as the usage itself has loaded.
             var enrichTargets = snapshots.filter {
-                $0.provider == "codex" || $0.provider == "claude"
+                $0.provider == "codex" || $0.provider == "claude" || $0.provider == "antigravity"
             }
             if let snapshot = selectedSnapshot,
                !enrichTargets.contains(where: { $0.id == snapshot.id })

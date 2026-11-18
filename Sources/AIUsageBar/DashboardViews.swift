@@ -233,8 +233,13 @@ struct ProviderDetailPopoverView: View {
     @ViewBuilder
     private var quotaContent: some View {
         if !dashboard.quotas.isEmpty {
-            DSSectionHeader(title: dashboard.quotaSectionTitle,
-                            info: dashboard.id == "claude" ? ClaudeQuotaCoverageView.note(for: dashboard) : nil)
+            DSSectionHeader(
+                title: dashboard.quotaSectionTitle,
+                info: dashboard.id == "claude"
+                    ? ClaudeQuotaCoverageView.note(for: dashboard)
+                    : dashboard.id == "antigravity"
+                    ? L("Subscription quota shared across Antigravity on all devices. Token and cost figures below read local conversation databases on this Mac only.")
+                    : nil)
             VStack(spacing: 16) {
                 ForEach(dashboard.quotas) { lane in
                     ProviderDetailQuotaRow(lane: lane, color: tint)
@@ -270,7 +275,10 @@ struct ProviderDetailPopoverView: View {
     private var historyContent: some View {
         let series = dashboardHistorySeries(for: dashboard)
         if !series.isEmpty {
-            DSSectionHeader(title: dashboard.historySectionTitle, info: L(dashboard.id == "claude" || dashboard.id == "codex"
+            DSSectionHeader(title: dashboard.historySectionTitle, info: L(
+                dashboard.id == "antigravity"
+                ? "Local Antigravity conversation history · estimated public API cost, not a Google charge. Models without public prices show token counts only."
+                : dashboard.id == "claude" || dashboard.id == "codex"
                 ? "Local model usage · estimated API cost, not your bill. Partial estimates show known costs; fully unknown costs appear as gaps. Claude excludes other models; logs cannot verify the billing account."
                 : "Each chart is labeled and scaled independently."))
             VStack(spacing: 22) {

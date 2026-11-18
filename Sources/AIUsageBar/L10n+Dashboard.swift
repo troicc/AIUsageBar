@@ -63,6 +63,19 @@ extension L10nTable {
         "Usage value · 30d": "用量价值 · 30 天",
         "Local usage value · this billing cycle": "本地用量价值 · 本订阅周期",
         "Usage value · this billing cycle": "用量价值 · 本订阅周期",
+        "Local models · 30d": "本地模型 · 30 天",
+        "Local models · this billing cycle": "本地模型 · 本订阅周期",
+        "Local Antigravity conversation history only; web and other devices are excluded. API equivalent ÷ monthly fee, not a Google charge or quota.":
+            "仅统计本机 Antigravity 对话记录，不含网页及其他设备。API 等价费用 ÷ 月费，并非 Google 扣费或额度。",
+        "Local Antigravity conversation history only; web and other devices are excluded. Models without public API prices show token counts only.":
+            "仅统计本机 Antigravity 对话记录，不含网页及其他设备。暂无公开 API 价格的模型仅显示 Token 数。",
+        "No public price": "暂无公开价格",
+        "Total tokens include cached and thinking tokens when reported.":
+            "总 Token 数包含已记录的缓存与思考 Token。",
+        "Subscription quota shared across Antigravity on all devices. Token and cost figures below read local conversation databases on this Mac only.":
+            "此额度由各设备上的 Antigravity 共用。下方的 Token 与费用仅来自本机的对话数据库。",
+        "Local Antigravity conversation history · estimated public API cost, not a Google charge. Models without public prices show token counts only.":
+            "本机 Antigravity 对话历史 · 按公开 API 价格估算，并非 Google 扣费。暂无公开价格的模型仅显示 Token 数。",
         "Since %@ · resets with the subscription": "自 %@ 起 · 随订阅周期重新计算",
         "Models · this cycle (%d)": "模型 · 本周期（%d）",
         "No model breakdown available for this billing cycle.": "本订阅周期没有可用的模型明细。",

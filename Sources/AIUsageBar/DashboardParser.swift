@@ -23,7 +23,9 @@ enum DashboardParser {
             rawJSON: snapshot.rawJSON,
             supplementalJSON: supplementalJSON)
         let financeProfile = ProviderFinanceProfile.profile(for: snapshot.provider)
-        let costBackedProvider = snapshot.provider == "codex" || snapshot.provider == "claude"
+        let costBackedProvider = snapshot.provider == "codex" ||
+            snapshot.provider == "claude" ||
+            snapshot.provider == "antigravity"
         let providerSpecific = snapshot.provider == "deepseek" ||
             snapshot.provider == "zai" ||
             snapshot.provider == "moonshot" ||
@@ -302,14 +304,14 @@ enum DashboardParser {
             topModel10Days: costPayload != nil ? costPayload?.topModel(dayCount: 10) : localTokenHistory?.topModel10Days,
             topModelToday: costPayload != nil ? costPayload?.topModel(dayCount: 1) : localTokenHistory?.topModelToday,
             planLabel: snapshot.planDisplayName,
-            subscriptionPreferenceKey: costBackedProvider
+            subscriptionPreferenceKey: costBackedProvider && (snapshot.provider != "antigravity" || rawCostPayload != nil)
                 ? "monthlySubscriptionUSD.\(snapshot.provider).\(StableIdentifier.hash(snapshot.id))" : nil,
             subscriptionDatePreferenceKey: SubscriptionTiming.preferenceKey(for: snapshot),
             subscriptionExpiresAt: snapshot.usage?.subscriptionExpiresAt,
             subscriptionRenewsAt: snapshot.usage?.subscriptionRenewsAt,
-            usageCostEstimate: snapshot.provider == "claude" && rawCostPayload?.daily == nil
+            usageCostEstimate: (snapshot.provider == "claude" || snapshot.provider == "antigravity") && rawCostPayload?.daily == nil
                 ? nil : costPayload?.last30DaysCostEstimate,
-            usageCostHistory: snapshot.provider == "claude" && rawCostPayload?.daily == nil
+            usageCostHistory: (snapshot.provider == "claude" || snapshot.provider == "antigravity") && rawCostPayload?.daily == nil
                 ? nil : costPayload,
             modelUsage: costPayload?.modelUsage() ?? [],
             hasClaudeSharedQuota: !snapshot.claudeSharedQuotaWindows.isEmpty)
@@ -672,8 +674,14 @@ enum DashboardParser {
                 tokens: day?.totalTokens ?? (day == nil && excluded ? 0 : nil),
                 dayKey: raw.date, spendEstimate: estimate)
         }
+        if payload.scanIsPartial == true {
+            return DashboardHistoryPoint.continuousDays(points,
+                through: payload.updatedAt.flatMap(isoDate), missingTokens: nil, missingSpend: nil)
+        }
+        let hasKnownCost = points.contains { $0.spend != nil }
+        let fillZeroSpend: Double? = (payload.provider == "antigravity" && !hasKnownCost) ? nil : 0
         return DashboardHistoryPoint.continuousDays(points,
-            through: payload.updatedAt.flatMap(isoDate), missingTokens: 0, missingSpend: 0)
+            through: payload.updatedAt.flatMap(isoDate), missingTokens: 0, missingSpend: fillZeroSpend)
     }
 
     private static func genericHistorySummary(
@@ -805,6 +813,9 @@ enum DashboardParser {
                 lanes.append(lane)
             }
         }
+        if snapshot.provider == "antigravity" {
+            lanes = dropGenericDuplicates(lanes, genericIDs: Set(quotaLanes(snapshot).map(\.id)))
+        }
         if snapshot.provider == "zai" {
             lanes.sort { left, right in
                 let leftIsFiveHour = left.windowMinutes.map { abs($0 - 300) <= 1 } ??
@@ -816,6 +827,25 @@ enum DashboardParser {
             }
         }
         return lanes
+    }
+
+    /// Antigravity reports its Gemini and Claude/GPT windows twice: once as the generic primary/secondary
+    /// ("5 hours") and again as group-scoped windows. Keep the scoped copy, whose title names the group.
+    static func dropGenericDuplicates(_ lanes: [DashboardQuotaLane], genericIDs: Set<String>) -> [DashboardQuotaLane] {
+        let scoped = lanes.filter { $0.id.hasPrefix("scoped-") }
+        guard !scoped.isEmpty else { return lanes }
+        return lanes.filter { lane in
+            guard genericIDs.contains(lane.id) else { return true }
+            return !scoped.contains { isSameWindow(lane, $0) }
+        }
+    }
+
+    private static func isSameWindow(_ left: DashboardQuotaLane, _ right: DashboardQuotaLane) -> Bool {
+        guard let leftMinutes = left.windowMinutes, let rightMinutes = right.windowMinutes,
+              abs(leftMinutes - rightMinutes) < 1,
+              let leftReset = left.resetsAt, let rightReset = right.resetsAt,
+              abs(leftReset.timeIntervalSince(rightReset)) < 60 else { return false }
+        return abs(left.usedPercent - right.usedPercent) < 0.5
     }
 
     private static func quotaLanes(_ snapshot: ProviderSnapshot) -> [DashboardQuotaLane] {

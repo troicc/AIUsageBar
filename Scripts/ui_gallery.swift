@@ -50,9 +50,12 @@ enum UIGallery {
         let antigravityQuotaHistory = AntigravityQuotaHistoryStore(storageDirectory: historyCopy)
         let activeMinutes = await ClaudeCodeActivityLog().activeMinutes()
         // History is keyed by the real identity, so it is looked up before anonymizing.
-        let snapshots = demo ? fetched.map(anonymized) : fetched
+        let displayed = demo ? fetched.map(anonymized) : fetched
         var dashboards: [String: ProviderDashboard] = [:]
-        for (original, snapshot) in zip(fetched, snapshots) {
+        var activityScores: [String: Double] = [:]
+        var prepared: [ProviderSnapshot] = []
+        for (original, unprepared) in zip(fetched, displayed) {
+            var snapshot = unprepared
             let supplement = await client.dashboardSupplementJSON(provider: snapshot.provider)
             var dashboard = DashboardParser.dashboard(snapshot: snapshot, supplementalJSON: supplement)
             if snapshot.provider == "claude" {
@@ -73,9 +76,17 @@ enum UIGallery {
                 }
             } else if snapshot.provider == "antigravity" {
                 dashboard.quotaTrendPools = antigravityQuotaHistory.record(snapshot: original)
+                ProviderActivity.preferBusiestPool(snapshot: &snapshot, dashboard: &dashboard, now: Date())
+                print("antigravity pools: \(ProviderActivity.poolScores(dashboard.quotaTrendPools, now: Date())), headline: \(snapshot.antigravityHeadline?.laneTitle ?? "-")")
             }
+            activityScores[snapshot.id] = ProviderActivity.historyScore(snapshot: snapshot, dashboard: dashboard, now: Date())
             dashboards[snapshot.id] = dashboard
+            prepared.append(snapshot)
         }
+        // The app's order: used most lately first (no reading log here, so
+        // accounts without a quota history count as unused).
+        let snapshots = ProviderActivity.ranked(prepared, scores: activityScores)
+        print("activity: \(activityScores)")
         print("snapshots: \(snapshots.map(\.provider).joined(separator: ", "))")
 
         for (mode, appearance) in [("light", NSAppearance(named: .aqua)!), ("dark", NSAppearance(named: .darkAqua)!)] {
@@ -118,6 +129,18 @@ enum UIGallery {
                         .padding(16).frame(width: 390)
                         .background(Color(nsColor: .windowBackgroundColor)),
                        appearance: appearance, output: output.appendingPathComponent("quota-insights-\(mode).png"))
+            }
+            // Antigravity: every pool in both windows.
+            if let agy = snapshots.first(where: { $0.provider == "antigravity" }), let dashboard = dashboards[agy.id] {
+                for pool in dashboard.quotaTrendPools {
+                    for window in ["five-hour", "weekly"] {
+                        render(ClaudeQuotaHistoryView(dashboard: dashboard, window: window, mode: .insights, pool: pool.id)
+                                .padding(16).frame(width: 390)
+                                .background(Color(nsColor: .windowBackgroundColor)),
+                               appearance: appearance,
+                               output: output.appendingPathComponent("agy-trend-\(pool.id)-\(window)-\(mode).png"))
+                    }
+                }
             }
             let entries = snapshots.map { AllProviderEntry(id: $0.id, dashboard: dashboards[$0.id] ?? DashboardParser.dashboard(snapshot: $0)) }
             render(AllProvidersContentView(entries: entries, isRefreshing: false, error: nil, refresh: {}, openSettings: {})
@@ -247,7 +270,7 @@ private struct MenuMock: View {
                                   quotaLabel: headline?.title ?? snapshot.headlineQuotaLabel, health: snapshot.serviceHealth,
                                   hasError: snapshot.error != nil, resetsAt: headline?.resetsAt,
                                   balanceText: dashboard.metrics.first { $0.id == "balance" && !DS.isPlaceholder($0) }?.value)
-        }.sorted { ($0.remainingPercent ?? 999) < ($1.remainingPercent ?? 999) }
+        }
     }
 
     var body: some View {

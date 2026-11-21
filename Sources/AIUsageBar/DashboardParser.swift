@@ -873,7 +873,8 @@ enum DashboardParser {
                     if let data = try? JSONSerialization.data(withJSONObject: window),
                        let rate = try? JSONCoding.decoder.decode(RateWindow.self, from: data),
                        let used = rate.usedPercent, used.isFinite {
-                        lanes.append(DashboardQuotaLane(id: "scoped-\(id)", title: L(title),
+                        lanes.append(DashboardQuotaLane(id: "scoped-\(id)",
+                            title: L(AntigravityQuotaNaming.title(id: id, title: title)),
                             usedPercent: max(0, min(100, used)),
                             resetText: rate.resetText ?? window["resetDescription"] as? String,
                             resetsAt: rate.resetsAt, windowMinutes: rate.windowMinutes))

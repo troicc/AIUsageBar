@@ -74,6 +74,8 @@ extension L10nTable {
         "Gemini weekly": "Gemini · 每周",
         "Claude/GPT 5-hour": "Claude/GPT · 5 小时",
         "Claude/GPT weekly": "Claude/GPT · 每周",
+        "Gemini Argon 5-hour": "Gemini Argon · 5 小时",
+        "Gemini Argon weekly": "Gemini Argon · 每周",
         "Monthly": "每月",
         "%d days": "%d 天",
         "%d hours": "%d 小时",

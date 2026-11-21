@@ -524,6 +524,35 @@ final class CoreBehaviorTests: XCTestCase {
         XCTAssertEqual(gemini5h.consumedPoints(in: DateInterval(start: base, end: base.addingTimeInterval(900))), 5.0, accuracy: 1e-6)
     }
 
+    func testAntigravityHeadlineFollowsPoolInUseAndBusiestAccountRanksFirst() throws {
+        let raw = """
+        {"provider":"antigravity","source":"cli","usage":{
+          "primary":{"usedPercent":37,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:36Z"},
+          "secondary":{"usedPercent":99.6,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:21Z"},
+          "extraRateWindows":[
+            {"id":"antigravity-quota-summary-gemini-5h","title":"Gemini 5-hour","window":{"usedPercent":4,"windowMinutes":300,"resetsAt":"2026-11-21T12:06:57Z"}},
+            {"id":"antigravity-quota-summary-gemini-weekly","title":"Gemini weekly","window":{"usedPercent":37,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:36Z"}},
+            {"id":"antigravity-quota-summary-gemini-argon-wtu-weekly","title":"Gemini weekly","window":{"usedPercent":2,"windowMinutes":10080,"resetsAt":"2026-11-26T10:42:14Z"}},
+            {"id":"antigravity-quota-summary-3p-5h","title":"Claude/GPT 5-hour","window":{"usedPercent":0,"windowMinutes":300,"resetsAt":"2026-11-21T12:20:00Z"}},
+            {"id":"antigravity-quota-summary-3p-weekly","title":"Claude/GPT weekly","window":{"usedPercent":99.6,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:21Z"}}
+          ]
+        }}
+        """
+        var agy = try XCTUnwrap(CLIClient.decodeSnapshots(raw).first)
+        // The spent but unused Claude/GPT weekly window must not represent the account.
+        XCTAssertEqual(agy.headlineUsedPercent, 4)
+        XCTAssertEqual(agy.antigravityQuotaWindows.map(\.poolID),
+                       ["gemini", "gemini", "gemini-argon", "claude-gpt", "claude-gpt"])
+        agy.preferredQuotaPoolID = "claude-gpt"
+        XCTAssertEqual(agy.headlineUsedPercent, 0)
+
+        let zai = quotaSnapshot(primary: RateWindow(usedPercent: 7, windowMinutes: 300, resetsAt: nil), secondary: nil)
+        XCTAssertEqual(ProviderActivity.ranked([zai, agy], scores: [zai.id: 5, agy.id: 20]).map(\.provider),
+                       ["antigravity", "zai"])
+        XCTAssertEqual(ProviderActivity.ranked([agy, zai], scores: [:]).map(\.provider), ["zai", "antigravity"],
+                       "without recent use the tightest quota leads")
+    }
+
     func testAdaptiveRefreshScheduleTiersAndInFlightGuard() {
         let launch = Date(timeIntervalSince1970: 1_700_000_000)
         XCTAssertEqual(RefreshSchedulePolicy.adaptiveInterval(

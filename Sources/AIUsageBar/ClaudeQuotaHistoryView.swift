@@ -76,27 +76,27 @@ struct ClaudeQuotaHistoryView: View {
     private var pools: [QuotaTrendPool] { dashboard.effectiveQuotaTrendPools }
 
     private var activePool: QuotaTrendPool? {
-        Self.resolvePool(in: pools, stored: storedPool, forced: forcedPool)
+        Self.resolvePool(in: pools, stored: storedPool, forced: forcedPool, now: now)
     }
 
     private var activeHistory: [ClaudeQuotaSeries] {
         activePool?.series ?? []
     }
 
-    static func resolvePool(in pools: [QuotaTrendPool], stored: String, forced: String?) -> QuotaTrendPool? {
+    /// The pool picked last, else the one used most lately (the one that
+    /// represents the account in the menu), else the first.
+    static func resolvePool(in pools: [QuotaTrendPool], stored: String, forced: String?,
+                            now: Date = Date()) -> QuotaTrendPool? {
         if let forced = forced, let match = pools.first(where: { $0.id == forced }) { return match }
         if !stored.isEmpty, let match = pools.first(where: { $0.id == stored }) { return match }
         if pools.count > 1,
-           let busiest = pools.max(by: { latestUsedPercent($0) < latestUsedPercent($1) }),
-           latestUsedPercent(busiest) > 0
+           let busiest = ProviderActivity.busiestPool(ProviderActivity.poolScores(pools, now: now),
+                                                      order: pools.map(\.id)),
+           let match = pools.first(where: { $0.id == busiest })
         {
-            return busiest
+            return match
         }
         return pools.first
-    }
-
-    private static func latestUsedPercent(_ pool: QuotaTrendPool) -> Double {
-        (pool.series.first { $0.id == "five-hour" } ?? pool.series.first)?.samples.last?.usedPercent ?? 0
     }
 
     /// Renewal or expiry date, from the account, the subscription card or the
@@ -419,7 +419,10 @@ struct ClaudeQuotaHistoryView: View {
                                    close: { selectedDay = nil })
                         .padding(.top, 2)
                 }
-                QuotaWindowBars(windows: windows, scale: scale, brand: brand).equatable().padding(.top, 8)
+                // A pool with only a weekly limit (Gemini Argon) has no 5-hour windows to show.
+                if facts.fiveHourLane != nil {
+                    QuotaWindowBars(windows: windows, scale: scale, brand: brand).equatable().padding(.top, 8)
+                }
                 QuotaPaceKey(showsQuiet: facts.pace?.followsRhythm == true && range.end >= now, brand: brand).padding(.top, 6)
             } else {
                 QuotaTimeAxis(scale: scale, now: now, daily: false)
@@ -525,8 +528,12 @@ private struct QuotaPoolSwitch: View {
     let brand: Color
     let onSelect: (String) -> Void
 
+    /// What is left in the window shown; nothing for a pool without that
+    /// window (Gemini Argon has only a weekly limit), rather than a weekly
+    /// figure that reads as a 5-hour one.
     private func remaining(for pool: QuotaTrendPool) -> Double? {
-        let lane = pool.series.first { $0.id == windowID } ?? pool.series.first
+        let lane = pool.series.count == 1 && pool.series[0].id != windowID
+            ? nil : pool.series.first { $0.id == windowID } ?? pool.series.first
         return lane?.samples.last.map { max(0, 100 - $0.usedPercent) }
     }
 

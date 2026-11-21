@@ -125,6 +125,7 @@ extension L10nTable {
         "No use recorded on this day.": "这一天没有用量记录。",
         "Gemini": "Gemini",
         "Claude/GPT": "Claude/GPT",
+        "Gemini Argon": "Gemini Argon",
         "Quota pool": "额度池",
         "Sampled from Antigravity quota readings on this Mac across Gemini and Claude/GPT pools.": "根据本机记录的 Antigravity 额度读数绘制，按 Gemini 与 Claude/GPT 额度池分别统计。",
     ]

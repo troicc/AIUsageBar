@@ -269,7 +269,7 @@ final class MenuController: NSObject, NSMenuDelegate {
 
     private func renderStatusItems() {
         if let mergedItem = mergedItem {
-            configureButton(mergedItem.button, snapshots: store.snapshots)
+            configureButton(mergedItem.button, snapshots: store.rankedSnapshots, representative: store.primarySnapshot)
         }
         for snapshot in store.snapshots {
             if let item = providerItems[snapshot.id] {
@@ -278,9 +278,13 @@ final class MenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func configureButton(_ button: NSStatusBarButton?, snapshots: [ProviderSnapshot]) {
+    /// `representative` is the account whose quota the merged icon shows: the
+    /// one used most lately (see `DashboardStore.primarySnapshot`), not the
+    /// fullest quota, which may belong to a pool nobody is using.
+    private func configureButton(_ button: NSStatusBarButton?, snapshots: [ProviderSnapshot],
+                                 representative: ProviderSnapshot? = nil) {
         guard let button = button else { return }
-        let highest = snapshots.compactMap(\.headlineUsedPercent).max()
+        let highest = (representative ?? snapshots.first)?.headlineUsedPercent
         let hasAlert = Preferences.shared.showServiceStatus && snapshots.contains(where: \.hasVisibleAlert)
         let alertPrefix = hasAlert ? "! " : ""
 
@@ -445,7 +449,7 @@ final class MenuController: NSObject, NSMenuDelegate {
         guard Preferences.shared.menuBarDisplayStyle != .providerIcon else { return }
         let size: CGFloat = Preferences.shared.menuBarDisplayStyle == .meter ? 16 : 13
         if let merged = mergedItem?.button {
-            let remaining = store.snapshots.compactMap(\.headlineUsedPercent).max().map { max(0, 100 - $0) }
+            let remaining = store.primarySnapshot?.headlineUsedPercent.map { max(0, 100 - $0) }
             if let remaining = remaining { animateStatusRing(merged, remaining: remaining, size: size) }
         }
         for id in ids {
@@ -522,7 +526,7 @@ final class MenuController: NSObject, NSMenuDelegate {
                 symbol: "plus.circle"))
             menu.addItem(.separator())
         } else {
-            // Providers are written out here, tightest quota first; a click
+            // Providers are written out here, the one used most lately first; a click
             // opens that provider's detail popover directly.
             let rows = overviewRows()
             let limit = Preferences.shared.overviewProviderLimit
@@ -682,10 +686,10 @@ final class MenuController: NSObject, NSMenuDelegate {
         return item
     }
 
-    /// Overview rows with the tightest quota first, so the provider that is
-    /// closest to running out is always at the top of the menu.
+    /// Overview rows with the account used most lately first (the one the
+    /// menu-bar icon shows), then unused ones with the tightest quota first.
     private func overviewRows() -> [NativeMenuOverviewRow] {
-        let rows = store.snapshots.map { snapshot -> NativeMenuOverviewRow in
+        store.rankedSnapshots.map { snapshot -> NativeMenuOverviewRow in
             let dashboard = store.dashboard(for: snapshot)
             let window = snapshot.headlineQuotaWindow
             let headline = dashboard.quotas.first { $0.title == snapshot.headlineQuotaLabel }
@@ -704,14 +708,6 @@ final class MenuController: NSObject, NSMenuDelegate {
                 resetsAt: headline?.resetsAt,
                 balanceText: balance)
         }
-        return rows.enumerated().sorted { left, right in
-            switch (left.element.remainingPercent, right.element.remainingPercent) {
-            case let (l?, r?) where l != r: return l < r
-            case (_?, nil): return true
-            case (nil, _?): return false
-            default: return left.offset < right.offset
-            }
-        }.map(\.element)
     }
 
     /// Plan is shown as a chip in the header, so the subtitle carries the

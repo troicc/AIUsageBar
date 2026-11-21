@@ -148,6 +148,7 @@ swiftc -module-cache-path "$MODULE_CACHE" \
   "$ROOT/Sources/AIUsageBar/LocalTokenHistoryStore.swift" \
   "$ROOT/Sources/AIUsageBar/AntigravityProtoReader.swift" \
   "$ROOT/Sources/AIUsageBar/AntigravityLocalUsage.swift" \
+  "$ROOT/Sources/AIUsageBar/ProviderActivity.swift" \
   "$TMP/main.swift" \
   -o "$TMP/antigravity-local-usage-regression"
 "$TMP/antigravity-local-usage-regression"

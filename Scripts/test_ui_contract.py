@@ -228,7 +228,14 @@ assert "refreshPending = true" in store
 # Enrichment re-resolves the account's current snapshot after the scan,
 # shares in-flight scans, and reuses recent results for menu opens.
 assert "let snapshot = snapshots.first(where: { $0.id == key })" in store
-assert "guard let current = snapshots.first(where: { $0.id == key })" in store
+assert "guard var current = snapshots.first(where: { $0.id == key })" in store
+# The account used most lately leads the menu and the merged icon; an unused
+# but spent quota (Antigravity Claude/GPT weekly) must not take the top spot.
+assert "store.rankedSnapshots.map { snapshot -> NativeMenuOverviewRow in" in menu
+assert "representative: store.primarySnapshot" in menu
+assert "compactMap(\\.headlineUsedPercent).max()" not in menu
+assert "ProviderActivity.ranked(snapshots, scores: activityScores)" in store
+assert "ProviderActivity.preferBusiestPool(snapshot: &snapshot, dashboard: &dashboard" in store
 assert "scansInFlight" in store
 assert "interactiveSupplementMaxAge" in store
 assert "recordLocalHistory(for:" in store

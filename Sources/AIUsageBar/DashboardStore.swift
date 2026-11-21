@@ -12,6 +12,8 @@ final class DashboardStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     private(set) var lastRefreshStartedAt: Date?
     @Published private(set) var tokenHistoryRevision = 0
+    /// How much each account was used lately, by snapshot ID; see `ProviderActivity`.
+    @Published private(set) var activityScores: [String: Double] = [:]
 
     private let client: CLIClient
     var onOpenSettings: (() -> Void)?
@@ -54,6 +56,7 @@ final class DashboardStore: ObservableObject {
     private let quotaTrendStore = LocalQuotaTrendStore()
     private let claudeQuotaHistoryStore = ClaudeQuotaHistoryStore()
     private let antigravityQuotaHistoryStore = AntigravityQuotaHistoryStore()
+    private let activityStore = ProviderActivityStore()
     /// Local Claude Code activity, used to split shared-quota consumption
     /// between Claude Code and web/desktop/other devices.
     private let claudeActivity = ClaudeCodeActivityLog()
@@ -78,6 +81,16 @@ final class DashboardStore: ObservableObject {
     var selectedSnapshot: ProviderSnapshot? {
         guard let selectedProviderID = selectedProviderID else { return snapshots.first }
         return snapshots.first(where: { $0.id == selectedProviderID || $0.provider == selectedProviderID })
+    }
+
+    /// Accounts used lately first, busiest first; then the rest, tightest quota first.
+    var rankedSnapshots: [ProviderSnapshot] {
+        ProviderActivity.ranked(snapshots, scores: activityScores)
+    }
+
+    /// The account the merged menu-bar icon stands for: the busiest one that has a quota.
+    var primarySnapshot: ProviderSnapshot? {
+        rankedSnapshots.first { $0.headlineUsedPercent != nil }
     }
 
     var selectedDashboard: ProviderDashboard? {
@@ -142,7 +155,10 @@ final class DashboardStore: ObservableObject {
             }
             let tokenRevisionBeforeRefresh = tokenHistoryStore.revision
             var rebuilt: [String: ProviderDashboard] = [:]
-            for snapshot in snapshots {
+            var prepared: [ProviderSnapshot] = []
+            var scores: [String: Double] = [:]
+            let now = Date()
+            for var snapshot in snapshots {
                 let cachedSupplement = cachedSupplement(for: snapshot)
                 let local = recordLocalHistory(for: snapshot, supplement: cachedSupplement)
                 let combinedSupplement = Self.combinedSupplementalJSON(
@@ -153,10 +169,14 @@ final class DashboardStore: ObservableObject {
                 var dashboard = DashboardParser.dashboard(
                     snapshot: snapshot,
                     supplementalJSON: combinedSupplement)
-                attachClaudeQuotaHistory(to: &dashboard, snapshot: snapshot)
+                attachClaudeQuotaHistory(to: &dashboard, snapshot: &snapshot)
+                scores[snapshot.id] = activityScore(snapshot: snapshot, dashboard: dashboard, now: now)
                 presentationSupplementBySnapshot[snapshot.id] = combinedSupplement
                 rebuilt[snapshot.id] = dashboard
+                prepared.append(snapshot)
             }
+            snapshots = prepared
+            activityScores = scores
             if tokenHistoryStore.revision != tokenRevisionBeforeRefresh {
                 tokenHistoryRevision = tokenHistoryStore.revision
             }
@@ -284,7 +304,7 @@ final class DashboardStore: ObservableObject {
         // A refresh may have finished while the scan ran. Apply the result to
         // the account's current snapshot, and re-check the multi-account guard
         // against the current list rather than the one the scan started with.
-        guard let current = snapshots.first(where: { $0.id == key }) else { return }
+        guard var current = snapshots.first(where: { $0.id == key }) else { return }
         let accountCount = providerAccountCount(current.provider)
         supplementFetchedAt[key] = Date()
         if let fetchedSupplement = fetchedSupplement, accountCount <= 1 {
@@ -308,7 +328,10 @@ final class DashboardStore: ObservableObject {
         var dashboard = DashboardParser.dashboard(
             snapshot: current,
             supplementalJSON: resolvedSupplement)
-        attachClaudeQuotaHistory(to: &dashboard, snapshot: current)
+        attachClaudeQuotaHistory(to: &dashboard, snapshot: &current)
+        if let index = snapshots.firstIndex(where: { $0.id == key }), snapshots[index] != current {
+            snapshots[index] = current
+        }
         dashboards[key] = dashboard
         presentationSupplementBySnapshot[key] = resolvedSupplement
     }
@@ -341,9 +364,17 @@ final class DashboardStore: ObservableObject {
         return outputs
     }
 
-    private func attachClaudeQuotaHistory(to dashboard: inout ProviderDashboard, snapshot: ProviderSnapshot) {
+    /// How much the account was used lately: from its quota history where it
+    /// has one, otherwise from the readings `activityStore` keeps.
+    private func activityScore(snapshot: ProviderSnapshot, dashboard: ProviderDashboard, now: Date) -> Double {
+        ProviderActivity.historyScore(snapshot: snapshot, dashboard: dashboard, now: now)
+            ?? ProviderActivity.score(activityStore.record(snapshot: snapshot, now: now), now: now)
+    }
+
+    private func attachClaudeQuotaHistory(to dashboard: inout ProviderDashboard, snapshot: inout ProviderSnapshot) {
         if snapshot.provider == "antigravity" {
             dashboard.quotaTrendPools = antigravityQuotaHistoryStore.record(snapshot: snapshot)
+            ProviderActivity.preferBusiestPool(snapshot: &snapshot, dashboard: &dashboard, now: Date())
             dashboard.claudeQuotaHistoryNotice = snapshot.antigravityQuotaAccountKey == nil
                 ? L("Account identity unavailable. History starts after this account can be identified.")
                 : antigravityQuotaHistoryStore.persistenceError
@@ -367,6 +398,10 @@ final class DashboardStore: ObservableObject {
         for snapshot in snapshots {
             rebuilt[snapshot.id] = DashboardParser.dashboard(snapshot: snapshot,
                 supplementalJSON: presentationSupplementBySnapshot[snapshot.id])
+            if snapshot.provider == "antigravity", var dashboard = rebuilt[snapshot.id] {
+                ProviderActivity.applyPreferredPool(snapshot.antigravityHeadline?.poolID, to: &dashboard)
+                rebuilt[snapshot.id] = dashboard
+            }
             rebuilt[snapshot.id]?.claudeQuotaHistory = dashboards[snapshot.id]?.claudeQuotaHistory ?? []
             rebuilt[snapshot.id]?.quotaTrendPools = dashboards[snapshot.id]?.quotaTrendPools ?? []
             rebuilt[snapshot.id]?.claudeQuotaHistoryNotice = dashboards[snapshot.id]?.claudeQuotaHistoryNotice

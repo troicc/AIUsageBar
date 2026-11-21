@@ -397,4 +397,121 @@ do {
             "corrupt quota file must be preserved")
 }
 
+// 8. What represents an account: idle Antigravity windows are not resets, the
+//    Gemini 4 Argon group is its own pool, the pool used most lately is the
+//    headline (not a spent pool nobody uses), and the busiest account ranks first.
+do {
+    let now = ISO8601DateFormatter().date(from: "2026-11-21T07:20:00Z")!
+    func iso(_ date: Date) -> String { FlexibleDate.iso8601String(date) }
+    func snapshot(_ raw: String) -> ProviderSnapshot {
+        let decoded = try! JSONCoding.decoder.decode(ProviderSnapshot.self, from: Data(raw.utf8))
+        return ProviderSnapshot(
+            provider: decoded.provider, version: decoded.version, source: decoded.source,
+            status: decoded.status, usage: decoded.usage, credits: decoded.credits,
+            account: decoded.account, plan: decoded.plan, error: decoded.error, rawJSON: raw)
+    }
+    // The real agy 1.5 report: Claude/GPT weekly nearly spent but unused, Gemini in use.
+    let agy = snapshot("""
+    {"provider":"antigravity","source":"cli","usage":{"updatedAt":"\(iso(now))",
+      "primary":{"usedPercent":37.1,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:36Z"},
+      "secondary":{"usedPercent":99.6,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:21Z"},
+      "extraRateWindows":[
+        {"id":"antigravity-quota-summary-gemini-5h","title":"Gemini 5-hour","window":{"usedPercent":4,"windowMinutes":300,"resetsAt":"2026-11-21T12:06:57Z"}},
+        {"id":"antigravity-quota-summary-gemini-weekly","title":"Gemini weekly","window":{"usedPercent":37.1,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:36Z"}},
+        {"id":"antigravity-quota-summary-gemini-argon-wtu-weekly","title":"Gemini weekly","window":{"usedPercent":2.1,"windowMinutes":10080,"resetsAt":"2026-11-26T10:42:14Z"}},
+        {"id":"antigravity-quota-summary-3p-5h","title":"Claude/GPT 5-hour","window":{"usedPercent":0,"windowMinutes":300,"resetsAt":"2026-11-21T12:20:00Z"}},
+        {"id":"antigravity-quota-summary-3p-weekly","title":"Claude/GPT weekly","window":{"usedPercent":99.6,"windowMinutes":10080,"resetsAt":"2026-11-26T07:20:21Z"}}
+      ]}}
+    """)
+    let windows = agy.antigravityQuotaWindows
+    require(windows.map { "\($0.poolID)::\($0.windowID)" } == [
+        "gemini::five-hour", "gemini::weekly", "gemini-argon::weekly", "claude-gpt::five-hour", "claude-gpt::weekly",
+    ], "Argon must be its own pool, got \(windows.map { "\($0.poolID)::\($0.windowID)" })")
+    require(windows[2].laneTitle == "Gemini Argon weekly", "Argon window must be named, got \(windows[2].laneTitle ?? "nil")")
+    require(DashboardParser.dashboard(snapshot: agy).quotas.contains { $0.title == L("Gemini Argon weekly") },
+            "quota list must name the Argon window")
+
+    // No history: the pool with 5-hour usage now, never the spent Claude/GPT weekly.
+    require(agy.headlineUsedPercent == 4, "headline must be Gemini 5-hour, got \(agy.headlineUsedPercent ?? -1)")
+    require(agy.headlineQuotaLabel == L("Gemini 5-hour"), "headline label must name the window")
+    var preferClaude = agy
+    preferClaude.preferredQuotaPoolID = "claude-gpt"
+    require(preferClaude.headlineUsedPercent == 0 && preferClaude.headlineQuotaLabel == L("Claude/GPT 5-hour"),
+            "the pool used most lately must be the headline")
+    var argon = agy
+    argon.preferredQuotaPoolID = "gemini-argon"
+    require(argon.headlineUsedPercent == 2.1, "a weekly-only pool is represented by its weekly window")
+
+    // Idle 5-hour readings (0%, reset one window ahead, moving each refresh) are one
+    // stretch without a window, not a reset per refresh; real use then starts one.
+    var idle: [ClaudeQuotaSample] = (0..<6).map { index in
+        let time = now.addingTimeInterval(Double(index - 6) * 900)
+        return ClaudeQuotaSample(timestamp: time, usedPercent: 0, resetsAt: time.addingTimeInterval(5 * 3600 - 2))
+    }
+    idle.append(ClaudeQuotaSample(timestamp: now, usedPercent: 4, resetsAt: now.addingTimeInterval(5 * 3600 - 300)))
+    let normalized = AntigravityQuotaHistoryStore.withoutIdleWindows(idle, duration: 5 * 3600)
+    let series = ClaudeQuotaSeries(id: "five-hour", title: "5h", samples: normalized)
+    require(normalized.prefix(6).allSatisfy { $0.resetsAt == nil } && normalized[6].resetsAt != nil,
+            "idle readings lose their sliding reset time; the started window keeps it")
+    require((1..<normalized.count).allSatisfy { !series.hasReset(before: $0) }, "idle stretch must not draw resets")
+    require(series.cycles().count == 1, "only the started window is a cycle, got \(series.cycles().count)")
+    require(abs(series.consumedPoints(in: DateInterval(start: idle[0].timestamp, end: now)) - 4) < 1e-9,
+            "the new window's first reading counts from zero")
+
+    // Pool scores decay with age: 4 points now beat 200 points two days ago.
+    let geminiPool = QuotaTrendPool(id: "gemini", title: "Gemini", series: [series])
+    let old = now.addingTimeInterval(-50 * 3600)
+    let claudeOld = ClaudeQuotaSeries(id: "five-hour", title: "5h", samples: [
+        ClaudeQuotaSample(timestamp: old, usedPercent: 0, resetsAt: old.addingTimeInterval(4 * 3600)),
+        ClaudeQuotaSample(timestamp: old.addingTimeInterval(600), usedPercent: 100, resetsAt: old.addingTimeInterval(4 * 3600)),
+        ClaudeQuotaSample(timestamp: old.addingTimeInterval(5 * 3600), usedPercent: 100, resetsAt: old.addingTimeInterval(9 * 3600)),
+    ])
+    let pools = [geminiPool, QuotaTrendPool(id: "claude-gpt", title: "Claude/GPT", series: [claudeOld])]
+    let scores = ProviderActivity.poolScores(pools, now: now)
+    require(ProviderActivity.busiestPool(scores, order: ["gemini", "claude-gpt"]) == "gemini",
+            "recent use must outrank older heavy use, got \(scores)")
+    require(ProviderActivity.busiestPool(["gemini": 0, "claude-gpt": 0], order: ["gemini", "claude-gpt"]) == nil,
+            "no use, no preferred pool")
+
+    // Ranking: used lately first, busiest first; unused ones tightest first.
+    let claude = snapshot("""
+    {"provider":"claude","usage":{"primary":{"usedPercent":7,"windowMinutes":300}}}
+    """)
+    let zai = snapshot("""
+    {"provider":"zai","usage":{"primary":{"usedPercent":90,"windowMinutes":300}}}
+    """)
+    let deepseek = snapshot("""
+    {"provider":"deepseek","usage":{}}
+    """)
+    let ranked = ProviderActivity.ranked([deepseek, zai, agy, claude],
+                                         scores: [claude.id: 20, agy.id: 5, zai.id: 0])
+    require(ranked.map(\.provider) == ["claude", "antigravity", "zai", "deepseek"],
+            "ranking must follow recent use, got \(ranked.map(\.provider))")
+    require(ProviderActivity.ranked([claude, deepseek, zai], scores: [:]).map(\.provider) == ["zai", "claude", "deepseek"],
+            "without use, the tightest quota comes first")
+
+    // Readings store: rises above the high-water mark, resets counted from zero, persisted.
+    let activityDir = root.appendingPathComponent("activity", isDirectory: true)
+    let activity = ProviderActivityStore(storageDirectory: activityDir)
+    func zaiReading(_ used: Double, reset: String) -> ProviderSnapshot {
+        snapshot("""
+        {"provider":"zai","usage":{"primary":{"usedPercent":\(used),"windowMinutes":300,"resetsAt":"\(reset)"}}}
+        """)
+    }
+    var steps: [ProviderActivity.Step] = []
+    for (offset, used, reset) in [(0.0, 10.0, "2026-11-21T09:00:00Z"), (600, 9.5, "2026-11-21T09:00:00Z"),
+                                  (1200, 15, "2026-11-21T09:00:00Z"), (9000, 3, "2026-11-21T14:00:00Z")] {
+        steps = activity.record(snapshot: zaiReading(used, reset: reset), now: now.addingTimeInterval(offset))
+    }
+    require(steps.map(\.points) == [5, 3], "expected a 5-point rise and a new window at 3, got \(steps.map(\.points))")
+    let reopened = ProviderActivityStore(storageDirectory: activityDir)
+    require(reopened.record(snapshot: zaiReading(3, reset: "2026-11-21T14:00:00Z"), now: now.addingTimeInterval(9600))
+                .map(\.points) == [5, 3], "activity must survive a restart without new points")
+    let activityFile = activityDir.appendingPathComponent("provider-activity-v1.json")
+    let activityAttrs = try! FileManager.default.attributesOfItem(atPath: activityFile.path)
+    require((activityAttrs[.posixPermissions] as? NSNumber)?.intValue == 0o600, "activity file must be 0600")
+    require(!String(decoding: try! Data(contentsOf: activityFile), as: UTF8.self).contains("zai::"),
+            "activity file must key accounts by hash")
+}
+
 print("Antigravity local usage regression tests passed.")

@@ -13,6 +13,9 @@ struct ProviderSnapshot: Decodable, Hashable, Identifiable {
     let rawJSON: String?
     // Display-only fallback: do not re-key existing local history when CLI metadata appears.
     var cliAccountStatus: ClaudeCLIAccountStatus? = nil
+    /// Antigravity: the quota pool used most lately (from local quota
+    /// history), which represents the account in compact UI.
+    var preferredQuotaPoolID: String? = nil
 
     init(
         provider: String,
@@ -135,6 +138,7 @@ struct ProviderSnapshot: Decodable, Hashable, Identifiable {
     /// window must not replace it simply because it is numerically larger.
     var headlineQuotaWindow: RateWindow? {
         guard provider != "deepseek" else { return nil }
+        if provider == "antigravity", let headline = antigravityHeadline { return headline.window }
         let windows = [usage?.primary, usage?.secondary, usage?.tertiary].compactMap { $0 }
         if let fiveHour = windows.first(where: { window in
             guard let minutes = window.windowMinutes else { return false }
@@ -157,8 +161,25 @@ struct ProviderSnapshot: Decodable, Hashable, Identifiable {
     }
 
     var headlineQuotaLabel: String? {
+        if provider == "antigravity" { return antigravityHeadline?.laneTitle.map { L($0) } }
         guard provider == "zai", headlineQuotaWindow != nil else { return nil }
         return "5h"
+    }
+
+    /// Antigravity has a separate quota per model group (Gemini, Claude/GPT,
+    /// Gemini Argon). The account is represented by the group in use: the one
+    /// used most lately, else the one with the most 5-hour usage now, else the
+    /// first. Within it, the 5-hour window, as for Claude. A group that is
+    /// spent but not used no longer stands for the whole account.
+    var antigravityHeadline: AntigravityQuotaWindow? {
+        let windows = antigravityQuotaWindows
+        guard let first = windows.first else { return nil }
+        let pool = preferredQuotaPoolID.flatMap { id in windows.contains { $0.poolID == id } ? id : nil }
+            ?? windows.filter { $0.windowID == "five-hour" && ($0.window.usedPercent ?? 0) > 0 }
+                .max { ($0.window.usedPercent ?? 0) < ($1.window.usedPercent ?? 0) }?.poolID
+            ?? first.poolID
+        let inPool = windows.filter { $0.poolID == pool }
+        return inPool.first { $0.windowID == "five-hour" } ?? inPool.first
     }
 
     var isFailed: Bool { error != nil }
@@ -569,4 +590,183 @@ private extension ISO8601DateFormatter {
         regular.formatOptions = [.withInternetDateTime]
         return [fractional, regular]
     }()
+}
+
+// MARK: - Antigravity quota windows
+
+struct AntigravityQuotaWindow {
+    let poolID: String
+    let poolTitle: String
+    let windowID: String
+    let windowTitle: String
+    let window: RateWindow
+    /// The engine's title for this window (as the quota list shows it), when it reported one.
+    var laneTitle: String? = nil
+}
+
+extension ProviderSnapshot {
+    var antigravityQuotaAccountKey: String? {
+        guard provider == "antigravity" else { return nil }
+        let email = [usage?.identity?.accountEmail, usage?.accountEmail, account]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .first { !$0.isEmpty }
+        let org = (usage?.identity?.accountOrganization ?? usage?.accountOrganization ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let email = email {
+            return StableIdentifier.hash("antigravity::\(email)::\(org)")
+        }
+        // Local CLI (`agy -p /usage`) and local language-server probes carry no
+        // email; OAuth and admin sources identify their account via email.
+        let lowerSource = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        guard !lowerSource.contains("oauth"), !lowerSource.contains("admin") else { return nil }
+        return StableIdentifier.hash("antigravity::local")
+    }
+
+    var antigravityQuotaWindows: [AntigravityQuotaWindow] {
+        guard provider == "antigravity", source?.lowercased().contains("admin") != true else { return [] }
+        var extracted: [AntigravityQuotaWindow] = []
+        var seen = Set<String>()
+
+        if let raw = rawJSON,
+           let data = raw.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let usageDict = (root["usage"] as? [String: Any]) ?? JSONKeys.normalizedDictionary(root)["usage"] as? [String: Any],
+           let extra = (usageDict["extraRateWindows"] as? [[String: Any]])
+               ?? (JSONKeys.normalizedDictionary(usageDict)["extraratewindows"] as? [[String: Any]])
+        {
+            for entry in extra {
+                if (entry["usageKnown"] as? Bool) == false { continue }
+                guard let id = entry["id"] as? String,
+                      let title = entry["title"] as? String,
+                      let windowDict = entry["window"] as? [String: Any],
+                      let windowData = try? JSONSerialization.data(withJSONObject: windowDict),
+                      let rate = try? JSONCoding.decoder.decode(RateWindow.self, from: windowData),
+                      let percent = rate.usedPercent, percent.isFinite, (0...100).contains(percent),
+                      let cadence = Self.antigravityCadence(window: rate, id: id, title: title),
+                      let pool = Self.antigravityPool(id: id, title: title)
+                else { continue }
+                let composite = "\(pool.id)::\(cadence.id)"
+                guard seen.insert(composite).inserted else { continue }
+                extracted.append(AntigravityQuotaWindow(
+                    poolID: pool.id,
+                    poolTitle: pool.title,
+                    windowID: cadence.id,
+                    windowTitle: cadence.title,
+                    window: rate,
+                    laneTitle: AntigravityQuotaNaming.title(id: id, title: title)))
+            }
+        }
+
+        if !extracted.isEmpty { return extracted }
+
+        // Fallback for legacy/model-quota payloads that only populate primary
+        // (Gemini representative) and secondary (Claude/GPT representative).
+        let referenceTime = usage?.updatedAt ?? Date()
+        let fallbacks: [(String, String, RateWindow?)] = [
+            ("gemini", L("Gemini"), usage?.primary),
+            ("claude-gpt", L("Claude/GPT"), usage?.secondary),
+        ]
+        for (poolID, poolTitle, candidate) in fallbacks {
+            guard let rate = candidate,
+                  let percent = rate.usedPercent, percent.isFinite, (0...100).contains(percent)
+            else { continue }
+            let cadence: (id: String, title: String)
+            if let minutes = rate.windowMinutes {
+                if abs(minutes - 10080) <= 1 {
+                    cadence = ("weekly", L("Weekly"))
+                } else if abs(minutes - 300) <= 1 {
+                    cadence = ("five-hour", L("5 hours"))
+                } else {
+                    continue
+                }
+            } else if let resetsAt = rate.resetsAt, resetsAt.timeIntervalSince(referenceTime) > 86_400 {
+                cadence = ("weekly", L("Weekly"))
+            } else {
+                cadence = ("five-hour", L("5 hours"))
+            }
+            let composite = "\(poolID)::\(cadence.id)"
+            guard seen.insert(composite).inserted else { continue }
+            extracted.append(AntigravityQuotaWindow(
+                poolID: poolID,
+                poolTitle: poolTitle,
+                windowID: cadence.id,
+                windowTitle: cadence.title,
+                window: rate))
+        }
+        return extracted
+    }
+
+    private static func antigravityCadence(window: RateWindow, id: String, title: String) -> (id: String, title: String)? {
+        if let minutes = window.windowMinutes {
+            if abs(minutes - 300) <= 1 { return ("five-hour", L("5 hours")) }
+            if abs(minutes - 10080) <= 1 { return ("weekly", L("Weekly")) }
+        }
+        let combined = "\(title) \(id)".lowercased().replacingOccurrences(of: "_", with: "-")
+        if combined.contains("5-hour") || combined.contains("5h") || combined.contains("five-hour")
+            || combined.contains("five hour") || combined.contains("session")
+        {
+            return ("five-hour", L("5 hours"))
+        }
+        if combined.contains("weekly") {
+            return ("weekly", L("Weekly"))
+        }
+        return nil
+    }
+
+    private static func antigravityPool(id: String, title: String) -> (id: String, title: String)? {
+        if let pool = AntigravityQuotaNaming.pool(id: id, title: title) { return pool }
+        let combined = "\(title) \(id)".lowercased()
+        if combined.contains("gemini") {
+            return ("gemini", L("Gemini"))
+        }
+        if combined.contains("claude") || combined.contains("gpt") {
+            return ("claude-gpt", L("Claude/GPT"))
+        }
+        guard id.lowercased().hasPrefix("antigravity-quota-summary-") else { return nil }
+        var base = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" 5-hour", " weekly", " 5 hours", " Weekly"] where base.lowercased().hasSuffix(suffix.lowercased()) {
+            base = String(base.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let slug = base.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        guard !slug.isEmpty else { return nil }
+        return (slug, base.isEmpty ? L("Quota") : base)
+    }
+}
+
+/// Antigravity's quota groups, read from the engine's window ids
+/// (`antigravity-quota-summary-<bucket>`): `gemini-5h`, `gemini-weekly`,
+/// `3p-5h`, `3p-weekly`, and separate model groups such as Gemini 4 Argon
+/// (`gemini-argon-wtu-weekly`), which the engine also titles "Gemini weekly".
+enum AntigravityQuotaNaming {
+    private static let prefix = "antigravity-quota-summary-"
+
+    /// The bucket without the prefix and the cadence suffix: `gemini`, `3p`, `gemini-argon-wtu`.
+    static func bucketGroup(id: String) -> String? {
+        let lower = id.lowercased()
+        guard lower.hasPrefix(prefix) else { return nil }
+        var bucket = String(lower.dropFirst(prefix.count))
+        for suffix in ["-5h", "-weekly", "-five-hour"] where bucket.hasSuffix(suffix) {
+            bucket = String(bucket.dropLast(suffix.count))
+            break
+        }
+        return bucket.isEmpty ? nil : bucket
+    }
+
+    static func pool(id: String, title: String) -> (id: String, title: String)? {
+        guard let group = bucketGroup(id: id) else { return nil }
+        if group.contains("argon") { return ("gemini-argon", L("Gemini Argon")) }
+        if group == "gemini" { return ("gemini", L("Gemini")) }
+        if group == "3p" { return ("claude-gpt", L("Claude/GPT")) }
+        return nil
+    }
+
+    /// The engine's title, naming the Argon group so it is not a second "Gemini weekly".
+    static func title(id: String, title: String) -> String {
+        guard let group = bucketGroup(id: id), group.contains("argon"),
+              !title.lowercased().contains("argon") else { return title }
+        let lower = id.lowercased()
+        return lower.hasSuffix("-5h") || lower.hasSuffix("-five-hour") ? "Gemini Argon 5-hour" : "Gemini Argon weekly"
+    }
 }

@@ -456,143 +456,6 @@ struct QuotaTrendPool: Hashable, Identifiable {
     let series: [ClaudeQuotaSeries]
 }
 
-struct AntigravityQuotaWindow {
-    let poolID: String
-    let poolTitle: String
-    let windowID: String
-    let windowTitle: String
-    let window: RateWindow
-}
-
-extension ProviderSnapshot {
-    var antigravityQuotaAccountKey: String? {
-        guard provider == "antigravity" else { return nil }
-        let email = [usage?.identity?.accountEmail, usage?.accountEmail, account]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .first { !$0.isEmpty }
-        let org = (usage?.identity?.accountOrganization ?? usage?.accountOrganization ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if let email = email {
-            return StableIdentifier.hash("antigravity::\(email)::\(org)")
-        }
-        // Local CLI (`agy -p /usage`) and local language-server probes carry no
-        // email; OAuth and admin sources identify their account via email.
-        let lowerSource = source?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-        guard !lowerSource.contains("oauth"), !lowerSource.contains("admin") else { return nil }
-        return StableIdentifier.hash("antigravity::local")
-    }
-
-    var antigravityQuotaWindows: [AntigravityQuotaWindow] {
-        guard provider == "antigravity", source?.lowercased().contains("admin") != true else { return [] }
-        var extracted: [AntigravityQuotaWindow] = []
-        var seen = Set<String>()
-
-        if let raw = rawJSON,
-           let data = raw.data(using: .utf8),
-           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let usageDict = (root["usage"] as? [String: Any]) ?? JSONKeys.normalizedDictionary(root)["usage"] as? [String: Any],
-           let extra = (usageDict["extraRateWindows"] as? [[String: Any]])
-               ?? (JSONKeys.normalizedDictionary(usageDict)["extraratewindows"] as? [[String: Any]])
-        {
-            for entry in extra {
-                if (entry["usageKnown"] as? Bool) == false { continue }
-                guard let id = entry["id"] as? String,
-                      let title = entry["title"] as? String,
-                      let windowDict = entry["window"] as? [String: Any],
-                      let windowData = try? JSONSerialization.data(withJSONObject: windowDict),
-                      let rate = try? JSONCoding.decoder.decode(RateWindow.self, from: windowData),
-                      let percent = rate.usedPercent, percent.isFinite, (0...100).contains(percent),
-                      let cadence = Self.antigravityCadence(window: rate, id: id, title: title),
-                      let pool = Self.antigravityPool(id: id, title: title)
-                else { continue }
-                let composite = "\(pool.id)::\(cadence.id)"
-                guard seen.insert(composite).inserted else { continue }
-                extracted.append(AntigravityQuotaWindow(
-                    poolID: pool.id,
-                    poolTitle: pool.title,
-                    windowID: cadence.id,
-                    windowTitle: cadence.title,
-                    window: rate))
-            }
-        }
-
-        if !extracted.isEmpty { return extracted }
-
-        // Fallback for legacy/model-quota payloads that only populate primary
-        // (Gemini representative) and secondary (Claude/GPT representative).
-        let referenceTime = usage?.updatedAt ?? Date()
-        let fallbacks: [(String, String, RateWindow?)] = [
-            ("gemini", L("Gemini"), usage?.primary),
-            ("claude-gpt", L("Claude/GPT"), usage?.secondary),
-        ]
-        for (poolID, poolTitle, candidate) in fallbacks {
-            guard let rate = candidate,
-                  let percent = rate.usedPercent, percent.isFinite, (0...100).contains(percent)
-            else { continue }
-            let cadence: (id: String, title: String)
-            if let minutes = rate.windowMinutes {
-                if abs(minutes - 10080) <= 1 {
-                    cadence = ("weekly", L("Weekly"))
-                } else if abs(minutes - 300) <= 1 {
-                    cadence = ("five-hour", L("5 hours"))
-                } else {
-                    continue
-                }
-            } else if let resetsAt = rate.resetsAt, resetsAt.timeIntervalSince(referenceTime) > 86_400 {
-                cadence = ("weekly", L("Weekly"))
-            } else {
-                cadence = ("five-hour", L("5 hours"))
-            }
-            let composite = "\(poolID)::\(cadence.id)"
-            guard seen.insert(composite).inserted else { continue }
-            extracted.append(AntigravityQuotaWindow(
-                poolID: poolID,
-                poolTitle: poolTitle,
-                windowID: cadence.id,
-                windowTitle: cadence.title,
-                window: rate))
-        }
-        return extracted
-    }
-
-    private static func antigravityCadence(window: RateWindow, id: String, title: String) -> (id: String, title: String)? {
-        if let minutes = window.windowMinutes {
-            if abs(minutes - 300) <= 1 { return ("five-hour", L("5 hours")) }
-            if abs(minutes - 10080) <= 1 { return ("weekly", L("Weekly")) }
-        }
-        let combined = "\(title) \(id)".lowercased().replacingOccurrences(of: "_", with: "-")
-        if combined.contains("5-hour") || combined.contains("5h") || combined.contains("five-hour")
-            || combined.contains("five hour") || combined.contains("session")
-        {
-            return ("five-hour", L("5 hours"))
-        }
-        if combined.contains("weekly") {
-            return ("weekly", L("Weekly"))
-        }
-        return nil
-    }
-
-    private static func antigravityPool(id: String, title: String) -> (id: String, title: String)? {
-        let combined = "\(title) \(id)".lowercased()
-        if combined.contains("gemini") {
-            return ("gemini", L("Gemini"))
-        }
-        if combined.contains("claude") || combined.contains("gpt") {
-            return ("claude-gpt", L("Claude/GPT"))
-        }
-        guard id.lowercased().hasPrefix("antigravity-quota-summary-") else { return nil }
-        var base = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        for suffix in [" 5-hour", " weekly", " 5 hours", " Weekly"] where base.lowercased().hasSuffix(suffix.lowercased()) {
-            base = String(base.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        let slug = base.lowercased()
-            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        guard !slug.isEmpty else { return nil }
-        return (slug, base.isEmpty ? L("Quota") : base)
-    }
-}
-
 /// Persists Antigravity quota percentages per pool (Gemini, Claude/GPT) and
 /// window (5-hour, weekly) in `antigravity-quota-history-v1.json`.
 final class AntigravityQuotaHistoryStore {
@@ -670,7 +533,10 @@ final class AntigravityQuotaHistoryStore {
                 let samples = (storedLanes[composite] ?? []).filter {
                     $0.timestamp <= now && $0.usedPercent.isFinite && (0...100).contains($0.usedPercent)
                 }.sorted { $0.timestamp < $1.timestamp }
-                return samples.isEmpty ? nil : ClaudeQuotaSeries(id: id, title: title, samples: samples)
+                guard !samples.isEmpty else { return nil }
+                let raw = ClaudeQuotaSeries(id: id, title: title, samples: samples)
+                return ClaudeQuotaSeries(id: id, title: title,
+                                         samples: Self.withoutIdleWindows(samples, duration: raw.windowDuration))
             }
             guard !series.isEmpty else { return nil }
             let title = Self.poolTitle(for: poolID, fallback: customTitles[poolID])
@@ -678,11 +544,27 @@ final class AntigravityQuotaHistoryStore {
         }
     }
 
+    /// Antigravity keeps reporting a window that has not started: usage 0 and
+    /// a reset time one full window after the reading, moving on with every
+    /// refresh. Those readings get no reset time, as for an idle Claude account,
+    /// so an idle stretch is one flat line instead of a new window, and a
+    /// "reset", at every refresh.
+    static func withoutIdleWindows(_ samples: [ClaudeQuotaSample], duration: TimeInterval?) -> [ClaudeQuotaSample] {
+        guard let duration = duration else { return samples }
+        return samples.map { sample in
+            guard let resetsAt = sample.resetsAt, sample.usedPercent < 0.01,
+                  abs(resetsAt.timeIntervalSince(sample.timestamp) - duration) <= 180
+            else { return sample }
+            return ClaudeQuotaSample(timestamp: sample.timestamp, usedPercent: sample.usedPercent, resetsAt: nil)
+        }
+    }
+
     private static func poolRank(_ id: String) -> Int {
         switch id {
         case "gemini": return 0
         case "claude-gpt": return 1
-        default: return 2
+        case "gemini-argon": return 2
+        default: return 3
         }
     }
 
@@ -690,6 +572,7 @@ final class AntigravityQuotaHistoryStore {
         switch id {
         case "gemini": return L("Gemini")
         case "claude-gpt": return L("Claude/GPT")
+        case "gemini-argon": return L("Gemini Argon")
         default:
             if let fallback = fallback, !fallback.isEmpty { return fallback }
             return id.replacingOccurrences(of: "-", with: " ").capitalized

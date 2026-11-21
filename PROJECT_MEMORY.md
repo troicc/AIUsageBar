@@ -2,6 +2,22 @@
 
 > ⚠️ **记忆漂移提醒：本文件只是 2026-08-01 的人工快照，不是事实源。** 分支、HEAD、工作树、上游能力、依赖版本、CI 和发布状态都可能在下一次对话前改变。每次开始分析、修改、发布或接手任务时，必须先读取本文件，再用 `git status --short --branch`、`git log -5 --oneline --decorate`、`git branch -vv` 和当前代码/测试重新验证。发生冲突时，以工作树、代码、测试、CI 和 Git 历史为准，并在同一轮改动中同步修正本文件；不得仅凭模型记忆或本文件里的旧结论继续操作。
 
+## 2026-11-21 菜单栏/菜单按“最近用得多”排序，Antigravity 按在用的额度池显示，趋势图去掉假重置（已安装 build 202611211532，2026-11-21 已提交到 main 并推送）
+
+- 现象（用户截图）：菜单栏和 Antigravity 菜单行都显示 0%，来自 Claude/GPT 每周（99.6% 已用），但用户这周主要用 Gemini，这个 0% 没意义；菜单行标签还写成“Gemini · 每周”（按 windowMinutes 匹配到了错的行）。Antigravity 额度趋势图 5 小时视图里堆满几十条“重置”竖线。
+- 原因：
+  1. 合并图标取所有服务商 `headlineUsedPercent` 的最大值；菜单行按剩余最少排序。Antigravity 的 primary/secondary 都是每周窗口（agy 1.5 报告），`headlineQuotaWindow` 找不到 5 小时就取用量最大的，即已用尽但没在用的 Claude/GPT 每周。
+  2. agy 对没开始的窗口照样报告：用量 0、重置时间 = 读取时间 + 整个窗口长度，每次刷新都往后挪。图表把每次挪动当成一次新窗口/重置。
+  3. agy 还有第三组 “Gemini 4 Argon”（`gemini-argon-wtu-weekly`，只有每周限额），引擎把标题也写成 “Gemini weekly”，详情里出现两个“Gemini · 每周”，历史里被当成 Gemini 池丢掉。
+- 修改：
+  - 新增 `ProviderActivity.swift`：按最近消耗的额度点数打分（5 小时窗口优先，指数衰减：6 小时折半，7 天外不计）。Claude 用自己的额度历史，Antigravity 用各池历史，其他服务商用新存储 `ProviderActivityStore`（`provider-activity-v1.json`，0600，账号按哈希，记录 headline 窗口高水位之上的上涨；预付费按余额下降占比）。`DashboardStore.rankedSnapshots`/`primarySnapshot`：最近用过的按分数排前，没用过的再按剩余最少；菜单行、全部服务商、合并图标（含 tooltip、重置动画）都用它。
+  - Antigravity：`ProviderSnapshot.preferredQuotaPoolID`（刷新时由各池分数选出），`antigravityHeadline` 取该池的 5 小时窗口（只有每周的池取每周）；没历史时取当前 5 小时用量最大的池，再不行取第一个。详情额度列表把在用的池排在最前。`headlineQuotaLabel` 返回该窗口标题。
+  - `AntigravityQuotaNaming`（在 `Models.swift`，和 `antigravityQuotaWindows` 一起从 `ClaudeQuotaHistory.swift` 挪过来，因为多个回归脚本只编 `Models.swift`）：按引擎 id 的 bucket 分组，Argon 独立为 `gemini-argon` 池，标题 “Gemini Argon · 每周”。
+  - 趋势图：`AntigravityQuotaHistoryStore.withoutIdleWindows` 在读取时把“用量 < 0.01 且重置时间 ≈ 读取时间 + 窗口长度（±3 分钟）”的样本的 resetsAt 置空（和 Claude 空闲时不报窗口同样处理），旧数据也一起修好；磁盘上的原始样本不改。池切换默认选最近用得最多的池；只有每周限额的池在 5 小时模式下胶囊不显示百分比，每周视图不显示 5 小时窗口条。
+- 本机实测打分：Claude 27–28，Antigravity 5.7（Gemini 4.6、Claude/GPT 1.1、Argon 0），因此菜单栏显示 Claude，Antigravity 行显示 “Gemini · 5 小时 96%”。
+- 验证：`antigravity_local_usage_regression.swift` 新增第 8 段（Argon 分池/命名、headline 选池、空闲窗口不算重置、衰减打分、排序、活动存储高水位/重置/持久化/权限），`CoreBehaviorTests` 新增一例（未在本机跑 SwiftPM）；`test_ui_contract.py` 增加排序相关断言；全套回归、UI/release/smoke/patcher/provider auth/catalog、visual model attribution 5 项、双架构 typecheck、`git diff --check` 通过；画廊新增 Antigravity 各池 × 两种窗口的趋势图（`agy-trend-*`），中文浅/深色已看过。`build_local_validation.sh` 通过，已安装 build 202611211532。
+- 清理（2026-11-21，用户要求）：删除了 `/private/tmp` 下所有旧版安装备份（`aiusagebar-install-backup.*`）和本地验证包（`aiusagebar-local-validation.*`）；之前各条记录里的备份路径都已不存在，回退只能从 Git 重新构建。
+
 ## 2026-11-18 调缓 Adaptive 刷新档位并修复打开菜单时的双连刷竞态（已安装 build 202611181714，已提交到 main 并推送）
 
 - 原因：用户反馈 Claude `/usage` 探测每 2 分钟执行一次（中间偶有 25 秒双连刷）。排查发现：
@@ -50,11 +66,13 @@
 - 注意：Gemini 的剩余比例在几次连续读取中来回变（0.990 ↔ 0.9996），直接跑 agy 也一样，是 Google 那边返回的数据，不是换算错误。诊断日志的错误计数只在内存里，App 重启后刷新成功不会写“恢复”行，判断有没有修好不能看这个日志。
 - 排查时注意：不要去读 agy 的 discovery 文件或令牌（权限规则会拦）；上游的做法也不需要令牌。
 
-## 2026-11-17 菜单里点服务商行有时打不开详情（已修并安装 build 202611171109，未经点击实测）
+## 2026-11-17 菜单里点服务商行有时打不开详情（第二轮已安装 build 202611171200，未经点击实测；2026-11-21 已提交到 main 并推送）
 
 - 现象：点一下服务商行有时没反应，双击才弹出，之后还要再点一下才响应。11-16 起服务商行改为自定义 `MenuActionRowView`（58f86da）后出现。
 - 原因：原生菜单项在菜单关闭后才发 action；自定义行在 `mouseUp` 里 `cancelTracking()` 后立刻 `performActionForItem`，菜单还在 tracking，详情 popover（transient）有时被菜单收尾当成外部点击关掉。“再点一下才响应”是因为先 show 后 activate，第一次点击花在激活上。
 - 修复：`MenuActionRowView.mouseUp` 改为 `RunLoop.main.perform(inModes: [.default])` 里执行 action（tracking 结束后才跑）；`ProviderDetailPopoverController` 和 `DetailsWindowController` 先 `NSApp.activate` 再 show，并让 popover 窗口 `makeKey()`。
+- 第二轮（同日）：用户反馈仍是“第一次打开要点两次，之后点一次就行”。区别在于 App 是否已激活：第一次弹出后 App 变为激活状态。修复：`MenuActionRowView` 重写 `acceptsFirstMouse` 返回 true 并接管 `mouseDown`（App 未激活时，第一下可能只用于激活菜单窗口，到不了行视图）；新增 `StatusPopoverPresenter`（两个 popover 共用），App 未激活时 0.8 秒内、激活完成后 0.2 秒内拒绝 transient popover 的关闭请求，激活完成后再次 `makeKey`。`close()` 会清掉这个保护。
+- 诊断日志：`log show --last 10m --predicate 'category == "MenuClick"' --info`，依次应有 row mouseDown/mouseUp → action fired → provider-detail show → app became active。少哪一步就说明卡在哪里。
 - Surge：用户说开着增强模式，但 11-17 本机检查没有 198.18.x.x 虚拟网卡，默认路由和到 160.79.104.10 的路由都走 en0，增强模式实际没生效。
 
 ## 2026-11-17 Claude 用量闲置后取不到：根因是 App 不带代理变量（已修并安装；引擎补丁已由 CI 构建，2026-11-17 提交 de5ce99 并推送）

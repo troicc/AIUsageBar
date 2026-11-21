@@ -742,7 +742,7 @@ struct ClaudeUsageInsightsCard: View {
     private var brand: Color { ProviderBrand.color(for: dashboard.id) }
     private var pools: [QuotaTrendPool] { dashboard.effectiveQuotaTrendPools }
     private var activePool: QuotaTrendPool? {
-        ClaudeQuotaHistoryView.resolvePool(in: pools, stored: storedPool, forced: pool)
+        ClaudeQuotaHistoryView.resolvePool(in: pools, stored: storedPool, forced: pool, now: now)
     }
     private var activeHistory: [ClaudeQuotaSeries] {
         activePool?.series ?? []

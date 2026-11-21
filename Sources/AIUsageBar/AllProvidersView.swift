@@ -6,7 +6,7 @@ struct AllProvidersDashboardView: View {
     @ObservedObject var store: DashboardStore
 
     var body: some View {
-        AllProvidersContentView(entries: store.snapshots.map { AllProviderEntry(id: $0.id, dashboard: store.dashboard(for: $0)) },
+        AllProvidersContentView(entries: store.rankedSnapshots.map { AllProviderEntry(id: $0.id, dashboard: store.dashboard(for: $0)) },
             isRefreshing: store.isRefreshing, error: store.lastError,
             refresh: { Task { await store.refresh() } }, openSettings: { store.onOpenSettings?() })
     }

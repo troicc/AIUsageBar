@@ -194,7 +194,7 @@ struct ProviderDashboard: Identifiable, Hashable {
     let source: String?
     let updatedText: String
     let metrics: [DashboardMetric]
-    let quotas: [DashboardQuotaLane]
+    var quotas: [DashboardQuotaLane]
     let history: [DashboardHistoryPoint]
     let historyContext: DashboardHistoryContext
     let historySummary: DashboardHistorySummary?

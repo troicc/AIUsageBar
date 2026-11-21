@@ -2,20 +2,19 @@
 import SwiftUI
 
 @MainActor
-final class ProviderDetailPopoverController: NSObject, NSPopoverDelegate {
-    private let popover = NSPopover()
+final class ProviderDetailPopoverController: NSObject {
+    private let presenter: StatusPopoverPresenter
+    private var popover: NSPopover { presenter.popover }
     private let store: DashboardStore
 
     init(store: DashboardStore) {
         self.store = store
+        presenter = StatusPopoverPresenter(name: "provider-detail")
         super.init()
-        popover.behavior = .transient
-        popover.animates = true
-        popover.delegate = self
         popover.contentSize = NSSize(width: 390, height: 560)
     }
 
-    var isShown: Bool { popover.isShown }
+    var isShown: Bool { presenter.isShown }
 
     func show(snapshot: ProviderSnapshot, relativeTo button: NSStatusBarButton) {
         store.select(snapshot)
@@ -27,10 +26,7 @@ final class ProviderDetailPopoverController: NSObject, NSPopoverDelegate {
         // Lay out once before showing, so the popover opens at the content's height.
         popover.contentSize = NSSize(width: 390, height: 560)
         controller.view.layoutSubtreeIfNeeded()
-        // Activate first and make the popover key, so its first click is not spent on activation.
-        NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        controller.view.window?.makeKey()
+        presenter.show(relativeTo: button)
     }
 
     /// Short panels get a short popover; long ones stop at 560 and scroll.
@@ -41,6 +37,6 @@ final class ProviderDetailPopoverController: NSObject, NSPopoverDelegate {
     }
 
     func close() {
-        popover.performClose(nil)
+        presenter.close()
     }
 }

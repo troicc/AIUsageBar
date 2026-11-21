@@ -841,6 +841,7 @@ final class MenuController: NSObject, NSMenuDelegate {
     }
 
     @objc private func openProviderDetailsMenuItem(_ sender: NSMenuItem) {
+        menuClickLog.notice("provider row action fired")
         guard let snapshotID = sender.representedObject as? String,
               let snapshot = store.snapshots.first(where: { $0.id == snapshotID }),
               let button = lastStatusButton

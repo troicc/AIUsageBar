@@ -442,7 +442,20 @@ final class MenuActionRowView: NSView {
         frame.contains(point) ? self : nil
     }
 
+    /// The menu belongs to an accessory app that is usually not active when it is
+    /// clicked. Without this, the first click after launch (or after using another
+    /// app) only activated the menu's window and never reached the row, so a
+    /// provider took two clicks to open; native items do not have that problem.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// Taken here so the press is not passed up to the menu's own views, which
+    /// would leave the release without a target.
+    override func mouseDown(with event: NSEvent) {
+        menuClickLog.notice("provider row mouseDown; app active=\(NSApp.isActive, privacy: .public)")
+    }
+
     override func mouseUp(with event: NSEvent) {
+        menuClickLog.notice("provider row mouseUp; app active=\(NSApp.isActive, privacy: .public)")
         guard let item = enclosingMenuItem, let menu = item.menu else { return }
         let index = menu.index(of: item)
         menu.cancelTracking()
